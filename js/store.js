@@ -3,17 +3,20 @@
    - Stale-while-revalidate: buka app → render dari localStorage (0 ms),
      lalu bootstrap server di latar → render ulang bila berubah.
    - Semua halaman membaca dari sini; pencarian/filter 100% lokal.
+   - v1.1: modul Kontrak dihapus; + penerima (PJ Ruangan). Kunci cache naik ke v2
+     agar cache lama (skema v1.0) otomatis tidak dipakai.
    ========================================================================== */
 const Store = (() => {
-  const TABLES = ['vendors', 'barang', 'po', 'poDetail', 'bast', 'bastDetail', 'invoice', 'kontrak', 'templates', 'users', 'notif'];
+  const TABLES = ['vendors', 'barang', 'po', 'poDetail', 'bast', 'bastDetail', 'invoice', 'templates', 'users', 'penerima', 'notif'];
   const S = { user: null, settings: {}, version: '0', sources: null, loadedYears: {} };
   TABLES.forEach(t => S[t] = []);
   let idx = {};
   const subs = new Set();
-  const LS_KEY = 'vms_state_v1';
+  const LS_KEY = 'vms_state_v2';
   const TOKEN_KEY = 'vms_token_v1';
   let persistTimer = null;
   let serverVersion = '0';
+  try { localStorage.removeItem('vms_state_v1'); } catch (e) { }
 
   function reindex(t) { if (t) delete idx[t]; else idx = {}; }
   function byId(t, id) {
@@ -61,7 +64,10 @@ const Store = (() => {
       const snap = { user: S.user, settings: S.settings, version: S.version, sources: S.sources, cutoffYear: S.cutoffYear, savedAt: Date.now() };
       TABLES.forEach(t => snap[t] = S[t]);
       localStorage.setItem(LS_KEY, JSON.stringify(snap));
-    } catch (e) { /* kuota penuh / private mode → abaikan */ }
+    } catch (e) {
+      // kuota penuh → buang cache gambar TTD lalu coba sekali lagi
+      try { Object.keys(localStorage).filter(k => k.indexOf('vms_img_') === 0).forEach(k => localStorage.removeItem(k)); localStorage.setItem(LS_KEY, JSON.stringify(Object.assign({ user: S.user, settings: S.settings, version: S.version }, ...TABLES.map(t => ({ [t]: S[t] }))))); } catch (e2) { }
+    }
   }
   function loadLocal() {
     try { const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); return s && s.user ? s : null; } catch (e) { return null; }
@@ -72,7 +78,7 @@ const Store = (() => {
     return null;
   }
   function clear() {
-    try { localStorage.removeItem(LS_KEY); localStorage.removeItem(TOKEN_KEY); } catch (e) { }
+    try { localStorage.removeItem(LS_KEY); localStorage.removeItem(TOKEN_KEY); Object.keys(localStorage).filter(k => k.indexOf('vms_img_') === 0).forEach(k => localStorage.removeItem(k)); } catch (e) { }
     S.user = null; TABLES.forEach(t => S[t] = []); reindex();
   }
   function seenVersion(v) { serverVersion = v; }
@@ -88,7 +94,9 @@ const Store = (() => {
   const invOfPO = id => S.invoice.filter(i => i.po_id === id);
   const userById = id => byId('users', id);
   const unread = () => S.notif.filter(n => String(n.dibaca) !== '1').length;
+  /** spesimen TTD akun yang sedang login */
+  const myTtd = () => (S.user && ((userById(S.user.id) || {}).ttd_file_id || S.user.ttd_file_id)) || '';
 
-  return { S, TABLES, byId, setBoot, mergeYear, upsert, upsertMany, remove, removeWhere, restore, subscribe, notify, persist, loadLocal, saveToken, loadToken, clear, seenVersion, isStale, markSynced, vendor, po, poItems, bastOfPO, bastItems, invOfPO, userById, unread, get serverVersion() { return serverVersion; } };
+  return { S, TABLES, byId, setBoot, mergeYear, upsert, upsertMany, remove, removeWhere, restore, subscribe, notify, persist, loadLocal, saveToken, loadToken, clear, seenVersion, isStale, markSynced, vendor, po, poItems, bastOfPO, bastItems, invOfPO, userById, unread, myTtd, get serverVersion() { return serverVersion; } };
 })();
 window.appState = Store.S;

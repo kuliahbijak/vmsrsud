@@ -364,3 +364,90 @@ table.tbl { width: 100%; border-collapse: collapse; }
   .main { margin: 0; } .content { padding: 0; max-width: none; }
   .card { box-shadow: none; break-inside: avoid; } body { background: #fff; }
 }
+
+/* ==========================================================================
+   v1.1 — Dokumen (SP/BAPB/BASTP/Invoice), TTD, WhatsApp & CRM, mobile
+   ========================================================================== */
+/* ---------- Pratinjau & cetak dokumen ---------- */
+.doc-preview { position: relative; overflow: hidden; background: #e6ecee; border: 1px solid var(--border); border-radius: 8px; }
+.doc-frame { display: block; width: 816px; min-height: 400px; border: 0; background: #fff; box-shadow: 0 2px 10px rgba(16,42,54,.12); }
+.doc-opts { margin-bottom: 12px; }
+.doc-ttd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; background: var(--tint); border-radius: 8px; padding: 10px 12px; }
+.doc-ttd .check { align-items: center; gap: 6px; }
+.doc-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.doc-embed { min-height: 120px; }
+.modal.xl .modal-b { background: #f6f9fa; }
+/* ---------- Tanda tangan ---------- */
+.ttd-seg { flex-wrap: wrap; }
+.ttd-seg button { font-family: var(--sans); font-size: 12px; }
+.ttd-box { min-height: 96px; border: 1px dashed var(--outline); border-radius: 8px; background: #fff; display: grid; place-items: center; padding: 10px; text-align: center; }
+.ttd-box img { max-width: 100%; max-height: 110px; object-fit: contain; }
+.ttd-stat { padding: 8px 12px; gap: 10px; cursor: pointer; border: 1px solid var(--border); background: #fff; font: inherit; color: inherit; }
+.ttd-stat:hover { border-color: var(--primary); }
+.logo-box { width: 76px; height: 76px; border: 1px solid var(--border); border-radius: 10px; display: grid; place-items: center; background: #fff; padding: 6px; flex: none; }
+.logo-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.bf-ref { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tpl-reg { grid-template-columns: 2fr 1.2fr 1.2fr; }
+.tpl-def .card-head p { margin: 2px 0 0; }
+/* ---------- Saklar ---------- */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .sl { width: 40px; height: 22px; border-radius: 11px; background: #c9d3d7; position: relative; transition: background .15s; flex: none; }
+.switch .sl::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
+.switch input:checked + .sl { background: var(--success); }
+.switch input:checked + .sl::after { transform: translateX(18px); }
+.switch input:focus-visible + .sl { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* ---------- WhatsApp ---------- */
+.wa-badge { font-size: 10px; padding: 1px 6px; }
+.wa-preview { background: #e5ddd5; background-image: radial-gradient(rgba(255,255,255,.35) 1px, transparent 1px); background-size: 14px 14px; border-radius: 10px; padding: 16px 14px; min-height: 140px; }
+.wa-bubble { background: #dcf8c6; border-radius: 8px 0 8px 8px; padding: 8px 10px 18px; max-width: 92%; margin-left: auto; font-size: 13.5px; line-height: 19px; position: relative; box-shadow: 0 1px 1px rgba(0,0,0,.12); word-wrap: break-word; }
+.wa-time { position: absolute; right: 8px; bottom: 3px; font-size: 10px; color: #6b7c6b; }
+/* ---------- CRM / tabel ---------- */
+.bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px; background: var(--primary-tint); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+.tbl tr.row-dim td { opacity: .55; }
+.tbl td[data-act] { cursor: pointer; }
+.timeline { border-left: 2px solid var(--border); margin: 8px 0 0 6px; padding-left: 14px; }
+.tl-item { position: relative; padding: 6px 0 10px; }
+.tl-item::before { content: ''; position: absolute; left: -20px; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: var(--primary); border: 2px solid #fff; }
+/* ---------- Navigasi bawah (HP) ---------- */
+.bnav { display: none; }
+@media (max-width: 1024px) {
+  .bf-ref { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tpl-reg { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 860px) {
+  .bnav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: rgba(255,255,255,.98); border-top: 1px solid var(--border); box-shadow: 0 -4px 16px rgba(16,42,54,.08); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); }
+  .bnav a, .bnav button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border: 0; background: none; color: var(--muted); text-decoration: none; font-size: 10.5px; font-family: var(--sans); position: relative; min-width: 0; cursor: pointer; }
+  .bnav a span, .bnav button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bnav svg { width: 21px; height: 21px; }
+  .bnav a.active { color: var(--primary-deep); font-weight: 600; }
+  .bnav a.active::before { content: ''; position: absolute; top: -4px; left: 30%; right: 30%; height: 3px; border-radius: 0 0 3px 3px; background: var(--primary-deep); }
+  .bnav .bdot { position: absolute; top: 2px; left: calc(50% + 6px); background: var(--danger); color: #fff; font-style: normal; font-size: 9px; line-height: 14px; min-width: 14px; padding: 0 3px; border-radius: 7px; }
+  .sticky-bar { bottom: calc(58px + env(safe-area-inset-bottom)); flex-wrap: wrap; gap: 8px; }
+  .content { padding-bottom: 170px; }
+  .toasts { bottom: 76px; left: 12px; right: 12px; max-width: none; }
+  .hide-sm { display: none !important; }
+  .page-head .acts { width: 100%; }
+  .page-head .acts > .btn { flex: 1 1 auto; }
+  .statline > div { min-width: 0; flex: 1 1 40%; padding: 6px 10px; } .statline > div + div { border-left: 0; }
+  /* tabel → kartu di layar sempit */
+  .tbl-cards thead { display: none; }
+  .tbl-cards, .tbl-cards tbody, .tbl-cards tr, .tbl-cards td { display: block; width: 100%; }
+  .tbl-cards tr { border-bottom: 1px solid var(--border); padding: 8px 4px; position: relative; }
+  .tbl-cards td { border: 0; padding: 4px 12px; text-align: left !important; }
+  .tbl-cards td[data-l]::before { content: attr(data-l); display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .tbl-cards td:first-child > input[type=checkbox] { position: absolute; right: 12px; top: 12px; }
+  .modal-f { position: sticky; bottom: 0; background: #fff; }
+  .modal-f .btn { flex: 1 1 auto; }
+  .doc-ttd { gap: 6px 12px; }
+}
+@media (max-width: 560px) {
+  .overlay { padding: 0; align-items: flex-end; }
+  .modal { max-width: none !important; border-radius: 14px 14px 0 0; max-height: 94vh; }
+  .modal-b { padding: 14px 16px; } .modal-h { padding: 14px 16px 10px; }
+  .bf-ref { grid-template-columns: minmax(0, 1fr); }
+  .btn { height: 42px; } .btn-sm { height: 34px; } .btn-xs { height: 30px; }
+  .filters .select { flex: 1 1 140px; min-width: 0; }
+  .card:not(.pad-0) { padding-left: 14px; padding-right: 14px; }
+}
+@media print { .bnav { display: none !important; } }

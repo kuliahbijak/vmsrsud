@@ -1,56 +1,83 @@
 /* ==========================================================================
    API — komunikasi fetch() ke GAS (pure REST JSON) + antrean optimistic
-   Prinsip:
+   gas-instant-ux-pro:
    - POST WAJIB Content-Type text/plain (hindari CORS preflight yang diblok GAS)
-   - Semua tulis melalui API.mutate(): UI berubah instan (0 ms), request
-     berjalan di latar dalam antrean berurutan; gagal → rollback + toast
+   - Aksi BACA: timeout pendek + retry bertahap (pulih dari cold start / sinyal HP)
+   - Aksi TULIS: membawa reqId unik → aman di-retry tanpa data ganda (idempoten di server)
+   - Semua tulis melalui API.mutate(): UI berubah instan (0 ms), request berjalan
+     di latar dalam antrean berurutan; gagal → rollback + toast
+   - Perf.table() di console: total vs waktu server (ms) per aksi
    ========================================================================== */
+const Perf = {
+  rows: [],
+  add(action, total, server) { this.rows.push({ action, total, server: server ?? null, net: server != null ? total - server : null, at: new Date().toLocaleTimeString('id-ID') }); if (this.rows.length > 200) this.rows.shift(); },
+  table() { console.table(this.rows.slice(-30)); }
+};
+window.Perf = Perf;
+
 const API = (() => {
   const cfg = window.VMS_CONFIG || {};
   const url = () => cfg.GAS_URL;
   let token = null;
   const queue = [];
   let running = false;
-  let online = true;
+  let online = navigator.onLine !== false;
   const listeners = new Set();
+  // aksi baca (aman diulang tanpa reqId)
+  const READ = /^(bootstrap|version|loadYear|images|getLogs|listBackups|importScan|scanTemplate|notifConfig|notifQueue|waAudience|waBlastList|waDevice|crmList|crmStats|crmDetail|crmExport|exportJson)$/;
 
   function setToken(t) { token = t; }
   function status() { return { pending: queue.length + (running ? 1 : 0), online }; }
   function emit() { listeners.forEach(fn => { try { fn(status()); } catch (e) { } }); }
   function onStatus(fn) { listeners.add(fn); }
+  const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function waitOnline(ms) { return new Promise(r => { if (navigator.onLine !== false) return r(); const t = setTimeout(done, ms); function done() { clearTimeout(t); removeEventListener('online', done); r(); } addEventListener('online', done); }); }
+
+  async function once(action, data, timeout, reqId) {
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), timeout);
+    const t0 = performance.now();
+    try {
+      const r = await fetch(url(), { method: 'POST', redirect: 'follow', cache: 'no-store', signal: ctrl.signal,
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, token, reqId, data }) });
+      const text = await r.text();
+      try { const j = JSON.parse(text); Perf.add(action, Math.round(performance.now() - t0), j.ms); return j; }
+      catch (e) { return { success: false, network: true, retryable: r.status >= 500 || r.status === 429, message: 'Server membalas HTTP ' + r.status + ' (bukan JSON).' }; }
+    } catch (e) {
+      return { success: false, network: true, retryable: true, message: e.name === 'AbortError' ? 'Server tidak merespons (timeout). Coba lagi.' : 'Tidak dapat terhubung ke server. Periksa koneksi internet.' };
+    } finally { clearTimeout(tm); }
+  }
 
   async function call(action, data = {}, opt = {}) {
     if (!url() || url().includes('GANTI_DENGAN')) throw new Error('GAS_URL belum diisi di js/config.js');
-    const ctrl = new AbortController();
-    const tm = setTimeout(() => ctrl.abort(), opt.timeout || cfg.REQUEST_TIMEOUT || 60000);
+    const isRead = READ.test(action) || opt.read;
+    const reqId = isRead ? '' : (opt.reqId || rid());
+    const tries = opt.retry === false ? 1 : isRead ? 3 : 2;   // tulis aman diulang karena reqId sama
     let res;
-    try {
-      const r = await fetch(url(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action, token, data }),
-        signal: ctrl.signal,
-        redirect: 'follow'
-      });
-      res = await r.json();
-      if (!online) { online = true; emit(); }
-    } catch (e) {
-      online = navigator.onLine !== false && e.name !== 'TypeError' ? online : false;
-      emit();
-      throw new Error(e.name === 'AbortError' ? 'Server tidak merespons (timeout). Coba lagi.' : 'Tidak dapat terhubung ke server. Periksa koneksi internet.');
-    } finally { clearTimeout(tm); }
+    for (let i = 0; i < tries; i++) {
+      if (i) { await sleep(1200 * i); if (navigator.onLine === false) await waitOnline(15000); }
+      const tmo = opt.timeout || (isRead ? (i ? 45000 : 25000) : (cfg.REQUEST_TIMEOUT || 90000));
+      res = await once(action, data, tmo, reqId);
+      if (res.success || !res.retryable) break;
+    }
+    const wasOnline = online;
+    online = !(res.network && !res.success);
+    if (wasOnline !== online) emit();
     if (res && res.code === 'AUTH' && action !== 'login') { window.dispatchEvent(new CustomEvent('vms:auth')); }
-    if (!res || !res.success) { const err = new Error((res && res.message) || 'Terjadi kesalahan'); err.code = res && res.code; throw err; }
+    if (!res || !res.success) { const err = new Error((res && res.message) || 'Terjadi kesalahan'); err.code = res && res.code; err.network = !!(res && res.network); throw err; }
     if (res.version && typeof Store !== 'undefined') Store.seenVersion(res.version);
     return res;
   }
 
   async function ping() {
     try {
-      const r = await fetch(url() + '?action=ping', { method: 'GET' });
+      const r = await fetch(url() + '?action=ping', { method: 'GET', cache: 'no-store' });
       const j = await r.json(); online = true; emit(); return j;
     } catch (e) { online = false; emit(); return null; }
   }
+  /** Bangunkan server (cold start) tanpa menunggu */
+  function warmUp() { try { fetch(url() + '?action=ping&t=' + Date.now(), { mode: 'no-cors', cache: 'no-store' }).catch(() => { }); } catch (e) { } }
 
   /**
    * Mutasi optimistic:
@@ -97,5 +124,5 @@ const API = (() => {
   window.addEventListener('online', () => { online = true; emit(); });
   window.addEventListener('offline', () => { online = false; emit(); });
 
-  return { call, ping, mutate, setToken, onStatus, status, get token() { return token; } };
+  return { call, ping, warmUp, mutate, setToken, onStatus, status, get token() { return token; } };
 })();

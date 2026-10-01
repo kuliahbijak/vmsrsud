@@ -1,26 +1,29 @@
 /* ==========================================================================
-   HALAMAN TRANSAKSI: Approval (PPK), BAST (PPTK), Invoice & Pembayaran,
-   Kontrak, dan Generate Dokumen dari Template Google Docs.
+   HALAMAN TRANSAKSI: Approval (PPK), BAPB (Penerimaan Barang), Invoice &
+   Pembayaran, dan Generate Dokumen dari Template Google Docs.
    ========================================================================== */
 
-/* ---------- Generate dokumen (dipakai semua modul) ---------- */
-function genDocument(jenis, refId, { silent = false, manual = null } = {}) {
-  const tpl = S.templates.find(t => t.jenis === jenis && t.status === 'Aktif');
-  if (!tpl) { if (!silent) UI.toast('Belum ada template ' + jenis + ' aktif. Admin dapat mendaftarkannya di Kelola Template.', 'warn', 5000); return Promise.resolve(null); }
-  const manualKeys = (tpl.placeholders || []).filter(p => (tpl.mapping || {})[p] === 'manual');
+/* ---------- PDF resmi dari template Google Docs (server, gas-doc-engine) ----------
+   jenis: PO | BAPB | BASTP | INVOICE · opt.ttd: 'gambar' | 'basah' | {TTD_PPK:false,...} */
+const DOC_FIELD = { PO: ['po', 'doc_file_id'], BAPB: ['bast', 'doc_file_id'], BASTP: ['bast', 'bastp_file_id'], INVOICE: ['invoice', 'doc_file_id'] };
+function genDocument(jenis, refId, { silent = false, manual = null, ttd } = {}) {
+  jenis = DC.normJenis(jenis);
+  const tpl = Doc.activeTpl(jenis);
+  if (!tpl) { if (!silent) UI.toast('Belum ada template ' + jenis + ' aktif. Admin: Kelola Template → Pasang Template Bawaan.', 'warn', 6000); return Promise.resolve(null); }
+  const fields = (Array.isArray(tpl.bidang) && tpl.bidang.length ? tpl.bidang : (tpl.placeholders || []).filter(p => (tpl.mapping || {})[p] === 'manual').map(k => ({ kunci: k, label: DC.label(k), tipe: DC.tebakTipe(k) })));
   const run = vals => {
-    if (!silent) UI.toast('Membuat dokumen ' + jenis + ' dari template…');
-    return API.call('generateDocument', { jenis, ref_id: refId, template_id: tpl.id, manual: vals || {} }, { timeout: 180000 }).then(r => {
-      const t = { PO: 'po', BAST: 'bast', INVOICE: 'invoice', KONTRAK: 'kontrak' }[jenis];
-      if (t && Store.byId(t, refId)) Store.upsert(t, { id: refId, doc_file_id: r.data.pdfId });
-      UI.toast('Dokumen ' + jenis + ' siap di Google Drive' + (r.data.missing && r.data.missing.length ? ' (kosong: ' + r.data.missing.join(', ') + ')' : ''), 'ok', 5000);
+    if (!silent) UI.toast('Membuat PDF ' + jenis + ' dari template Google Docs…');
+    return API.call('generateDocument', { jenis, ref_id: refId, template_id: tpl.id, manual: vals || {}, ttd }, { timeout: 180000 }).then(r => {
+      const f = DOC_FIELD[jenis]; if (f && Store.byId(f[0], refId)) Store.upsert(f[0], { id: refId, [f[1]]: r.data.pdfId });
+      if (!silent) UI.modal({ title: 'PDF siap', sub: E(DOC_LABEL[jenis] || jenis), body: `<p class="small">Dokumen tersimpan di Google Drive folder rekanan/SP terkait.</p><div class="row wrap mt"><a class="btn" target="_blank" rel="noopener" href="${E(r.data.pdfUrl)}">${I('pdf')} Buka PDF</a><a class="btn btn-outline" target="_blank" rel="noopener" href="${E(r.data.docUrl)}">${I('doc')} Buka Google Docs</a></div>`, foot: '<button class="btn btn-outline" data-close>Tutup</button>' });
       return r.data;
-    }).catch(e => { UI.toast('Generate dokumen gagal: ' + e.message, 'err', 6000); return null; });
+    }).catch(e => { if (!silent) UI.toast('Generate PDF gagal: ' + e.message, 'err', 7000); return null; });
   };
-  if (manualKeys.length && !manual) {
+  if (fields.length && !manual) {
     return new Promise(res => {
-      const m = UI.modal({ title: 'Lengkapi isian dokumen', sub: 'Template ' + E(tpl.nama) + ' memiliki isian manual', body: `<div class="stack">${manualKeys.map(k => `<div class="field"><label class="mono small">[${E(k)}]</label><input class="input" data-k="${E(k)}"></div>`).join('')}</div>`, foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn" id="gd-ok">${I('doc')} Generate</button>` });
-      m.q('#gd-ok').onclick = () => { const v = {}; m.qa('[data-k]').forEach(i => v[i.dataset.k] = i.value); m.close(); res(run(v)); };
+      const inp = b => b.tipe === 'area' ? `<textarea class="textarea" data-k="${E(b.kunci)}"></textarea>` : `<input class="input" data-k="${E(b.kunci)}" type="${b.tipe === 'tanggal' ? 'date' : b.tipe === 'angka' ? 'number' : 'text'}">`;
+      const m = UI.modal({ title: 'Lengkapi isian dokumen', sub: 'Template ' + E(tpl.nama) + ' memiliki isian manual', body: `<div class="stack">${fields.map(b => `<div class="field"><label>${E(b.label || b.kunci)} <span class="mono xs muted">{{${E(b.kunci)}}}</span></label>${inp(b)}</div>`).join('')}</div>`, foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn" id="gd-ok">${I('doc')} Buat PDF</button>`, onClose: () => res(null) });
+      m.q('#gd-ok').onclick = () => { const v = {}; m.qa('[data-k]').forEach(i => v[i.dataset.k] = i.value); const p = run(v); m.close(); res(p); };
     });
   }
   return run(manual);
@@ -31,17 +34,19 @@ Act['doc.gen'] = el => genDocument(el.dataset.jenis, el.dataset.id);
    APPROVAL (PPK)
    ===================================================================== */
 Pages.approval = {
-  title: 'Approval', roles: ['PPK'], deps: ['po', 'poDetail', 'invoice', 'kontrak', 'vendors'],
+  title: 'Approval', roles: ['PPK'], deps: ['po', 'poDetail', 'invoice', 'vendors'],
   render(el, param) {
     const st = ps('approval', { tab: 'po', filter: 'all', q: '', note: {}, zoom: 100 });
-    if (param && param.startsWith('inv:')) st.tab = 'inv'; else if (param && param.startsWith('k:')) st.tab = 'kontrak'; else if (param) { st.tab = 'po'; st.sel = param; }
-    const nPO = S.po.filter(p => p.status === 'Menunggu Approval').length, nInv = S.invoice.filter(i => i.status === 'Menunggu Verifikasi').length, nK = S.kontrak.filter(k => k.status === 'Menunggu Approval').length;
+    if (param && param.startsWith('inv:')) st.tab = 'inv'; else if (param) { st.tab = 'po'; st.sel = param; }
+    const nPO = S.po.filter(p => p.status === 'Menunggu Approval').length, nInv = S.invoice.filter(i => i.status === 'Menunggu Verifikasi').length;
+    const myTtd = Store.myTtd();
     el.innerHTML = pageHead({
-      eyebrow: `<span class="tag navy">Modul Pejabat Pembuat Komitmen (PPK)</span> • Siklus Verifikasi APBD ${YEAR}`, title: 'Approval Purchase Order',
-      extra: `<span class="chip st-blue nodot">${I('hourglass')} ${nPO + nInv + nK} Dokumen Menunggu Persetujuan</span>`,
-      actions: `<div class="card flat row" style="padding:10px 14px"><span style="color:var(--success)">${I('shield')}</span><div><div class="mono xs muted">Otoritas Validasi</div><b class="small">Digital Signature PPK Aktif</b></div></div>`
-    }) + tabsBar('appr.tab', [{ id: 'po', l: 'Purchase Order', n: nPO }, { id: 'inv', l: 'Invoice / Tagihan', n: nInv }, { id: 'kontrak', l: 'Kontrak', n: nK }], st.tab) +
-      (st.tab === 'po' ? apprPO(st) : st.tab === 'inv' ? apprInv(param) : apprKontrak());
+      eyebrow: `<span class="tag navy">Modul Pejabat Pembuat Komitmen (PPK)</span> • Siklus Verifikasi APBD ${YEAR}`, title: 'Approval Surat Pesanan',
+      extra: `<span class="chip st-blue nodot">${I('hourglass')} ${nPO + nInv} Dokumen Menunggu Persetujuan</span>`,
+      actions: `<button class="card flat row ttd-stat" data-act="me.ttd" title="Atur TTD spesimen"><span style="color:${myTtd ? 'var(--success)' : 'var(--warn)'}">${I('pen')}</span><div style="text-align:left"><div class="mono xs muted">Tanda tangan PPK pada SP</div><b class="small">${myTtd ? (S.settings.TTD_MODE === 'basah' ? 'Spesimen ada · mode TTD basah' : 'TTD gambar dibubuhkan otomatis') : 'Belum ada spesimen — klik untuk unggah'}</b></div></button>`
+    }) + tabsBar('appr.tab', [{ id: 'po', l: 'Surat Pesanan', n: nPO }, { id: 'inv', l: 'Invoice / Tagihan', n: nInv }], st.tab) +
+      (st.tab === 'po' ? apprPO(st) : apprInv(param));
+    Docs.hydrate(el);
   }
 };
 function apprQueue(st) {
@@ -75,16 +80,16 @@ function apprPO(st) {
   const lampiran = Array.isArray(sel.lampiran) ? sel.lampiran : [];
   const methodOk = !!sel.rujukan || sel.total <= 200e6;
   const vendorOk = v.status === 'Aktif Terverifikasi';
-  const center = `<div><div class="card row wrap" style="padding:10px 14px;margin-bottom:12px">${I('pdf')}<span class="mono xs" style="flex:1">PDF Preview: ${E(String(sel.nomor_po).replace(/\//g, '_'))}.pdf</span>
-      <div class="seg"><button data-act="appr.zoom" data-v="-10">−</button><button class="on">${st.zoom}%</button><button data-act="appr.zoom" data-v="10">+</button></div><button class="btn btn-soft btn-sm" data-act="po.print" data-id="${sel.id}">${I('print')} Cetak</button></div>
-    <div class="paper-wrap"><div style="zoom:${st.zoom / 100}">${Docs.poPaper(sel)}</div></div></div>`;
+  const center = `<div><div class="card row wrap" style="padding:10px 14px;margin-bottom:12px">${I('pdf')}<span class="mono xs" style="flex:1">Pratinjau Surat Pesanan: ${E(sel.nomor_po || '')}</span>
+      <button class="btn btn-soft btn-sm" data-act="po.print" data-id="${sel.id}">${I('print')} Cetak / PDF</button></div>
+    <div class="paper-wrap">${Docs.poPaper(sel)}</div></div>`;
   const right = `<div class="card verif"><div class="row mb"><span style="color:var(--primary)">${I('shield')}</span><h3 style="flex:1">Verification Details</h3><span class="chip st-blue nodot">PPK Review</span></div>
     <div class="blk"><div class="hd"><span>1. SUMBER DANA & ANGGARAN</span>${sel.sumber_dana ? `<span class="ok-t">${I('check')} Verified</span>` : `<span class="bad-t">${I('alert')} Kosong</span>`}</div><div>${E(sel.sumber_dana || 'Sumber dana belum diisi')}</div><div class="mono xs mt-s">Realisasi TA ${YEAR}: <b style="color:var(--success-dark)">${RP(realisasi)}</b></div></div>
     <div class="blk"><div class="hd"><span>2. METODE PENGADAAN</span>${methodOk && !overHps.length ? `<span class="ok-t">${I('check')} Compliant</span>` : `<span class="bad-t">${I('alert')} Periksa</span>`}</div><div>${sel.rujukan ? 'E-Katalog / E-Purchasing' : 'Pengadaan Langsung'}</div>
       <div class="mono xs mt-s">${sel.rujukan ? 'Rujukan: <b>' + E(sel.rujukan) + '</b><br>' : sel.total > 200e6 ? '<span style="color:var(--danger)">Nilai > Rp200 Jt tanpa rujukan e-katalog</span><br>' : ''}Harga vs HPS: <b style="color:${overHps.length ? 'var(--danger)' : 'var(--success-dark)'}">${overHps.length ? overHps.length + ' item melebihi HPS' : 'Sesuai HPS'}</b></div></div>
     <div class="blk"><div class="hd"><span>3. DOKUMEN KELENGKAPAN (${docs.length + lampiran.length})</span><span class="chip ${vendorOk ? 'st-green' : 'st-amber'} nodot">${vendorOk ? 'Lengkap' : E(v.status || 'Periksa')}</span></div>
       ${lampiran.concat(docs).map(d => `<div class="doc-line">${I('doc')}<span class="ellipsis" style="flex:1">${E(d.name)}</span>${UI.driveUrl(d.fileId) ? `<a href="${UI.driveUrl(d.fileId)}" target="_blank" rel="noopener" class="icon-btn" style="width:22px;height:22px">${I('eye')}</a>` : `<span style="color:var(--success)">${I('check')}</span>`}</div>`).join('') || '<div class="xs muted">Vendor belum mengunggah dokumen legalitas.</div>'}</div>
-    <div class="info-box mt">${I('info')}<span>Persetujuan ini akan menerbitkan Surat Pesanan resmi, dicatat di audit trail, dan otomatis mendisposisikan PO ke PPTK & portal rekanan${S.templates.some(t => t.jenis === 'PO' && t.status === 'Aktif') ? ' serta men-generate PDF dari template' : ''}.</span></div>
+    <div class="info-box mt">${I('info')}<span>Persetujuan ini menerbitkan Surat Pesanan resmi${myTtdTxt()}, dicatat di audit trail, dan otomatis mendisposisikan SP ke PPTK & portal rekanan${Doc.activeTpl('PO') ? ' serta membuat PDF dari template' : ''}.</span></div>
     <div class="row mt" style="align-items:baseline"><b style="flex:1">Catatan / Disposisi PPK</b><span class="mono xs muted">Wajib bila menolak</span></div>
     <textarea class="textarea tinted mt-s" rows="3" placeholder="Tambahkan catatan persetujuan atau alasan revisi/penolakan…" data-in="appr.note" data-id="${sel.id}">${E(st.note[sel.id] || '')}</textarea>
     <div class="row mt"><button class="btn btn-outline-danger" style="flex:1" data-act="appr.reject" data-id="${sel.id}">${I('back')} Tolak / Revisi</button><button class="btn btn-success" style="flex:1" data-act="appr.approve" data-id="${sel.id}">${I('check')} Setujui PO</button></div>
@@ -117,35 +122,35 @@ function decidePO(id, keputusan) {
 Act['appr.approve'] = el => decidePO(el.dataset.id, 'setuju');
 Act['appr.reject'] = el => decidePO(el.dataset.id, 'tolak');
 
+function myTtdTxt() { return S.settings.TTD_MODE === 'basah' ? ' (tempat TTD dikosongkan untuk TTD basah)' : Store.myTtd() ? ' dengan TTD gambar Anda' : ' (belum ada spesimen TTD — dicetak untuk TTD basah)'; }
 function apprInv(param) {
   const list = S.invoice.filter(i => i.status === 'Menunggu Verifikasi').sort((a, b) => a.jatuh_tempo > b.jatuh_tempo ? 1 : -1);
   return `<div class="card pad-0">${invTableHTML(list, { approve: true, hl: param && param.slice(4) })}</div>`;
 }
-function apprKontrak() {
-  const list = S.kontrak.filter(k => k.status === 'Menunggu Approval');
-  return `<div class="card pad-0">${kontrakTable(list)}</div>`;
-}
 
 /* =====================================================================
-   BAST — daftar & pilih PO
+   BAPB — Berita Acara Penerimaan Barang (dulu "BAST")
+   Ditandatangani Penanggung Jawab Ruangan / Penerima, mengetahui PPTK.
+   Dari BAPB yang disahkan juga dapat dicetak BAST Hasil Pekerjaan (BASTP)
+   antara Penyedia ↔ PPK. Nama sheet internal tetap BAST / BAST_Detail.
    ===================================================================== */
 Pages.bast = {
-  title: 'BAST', deps: ['bast', 'bastDetail', 'po', 'vendors', 'invoice'],
+  title: 'Penerimaan Barang (BAPB)', deps: ['bast', 'bastDetail', 'po', 'vendors', 'invoice', 'penerima'],
   render(el, param) {
     const st = ps('bast', { q: '', page: 1 });
     const ready = S.po.filter(p => ['Disetujui PPK', 'BAST Parsial'].includes(p.status));
     const q = st.q.toLowerCase();
-    const list = S.bast.filter(b => !q || (b.nomor_bast + ' ' + (Store.po(b.po_id) || {}).nomor_po + ' ' + vName(b.vendor_id)).toLowerCase().includes(q)).sort((a, b) => (b.created_at || b.tanggal) > (a.created_at || a.tanggal) ? 1 : -1);
+    const list = S.bast.filter(b => !q || (b.nomor_bast + ' ' + (Store.po(b.po_id) || {}).nomor_po + ' ' + vName(b.vendor_id) + ' ' + (b.penerima_nama || '') + ' ' + (b.ruangan || '')).toLowerCase().includes(q)).sort((a, b) => (b.created_at || b.tanggal) > (a.created_at || a.tanggal) ? 1 : -1);
     const pg = UI.paginate(list, st.page, 15);
     el.innerHTML = pageHead({
-      eyebrow: `<span class="tag">Modul Pejabat Pelaksana Teknis Kegiatan (PPTK)</span> / Kontrak Fisik TA ${YEAR}`, title: isVendor() ? 'BAST Diterima' : 'Berita Acara Serah Terima (BAST)',
-      sub: isVendor() ? 'Berita acara penerimaan barang yang telah ditandatangani PPTK.' : 'Pencatatan hasil pemeriksaan fisik, volume, dan kelayakan barang yang diserahkan oleh rekanan penyedia.'
-    }) + (can('bastEdit') ? `<div class="card mb"><div class="card-head"><div class="ic" style="background:#d6f5df;color:var(--success)">${I('clipcheck')}</div><div style="flex:1"><h3>PO Siap Diperiksa (${ready.length})</h3><p>PO yang telah disetujui PPK dan menunggu pemeriksaan fisik barang</p></div></div>
-      ${ready.length ? `<div class="grid g3">${ready.map(p => `<div class="act-item" style="margin:0"><div class="top"><b class="mono small">${E(p.nomor_po)}</b>${CHIP(p.status)}</div><div class="tt">${E(vName(p.vendor_id))}</div><div class="ds">${E(p.paket || p.kategori || '')} · ${E(p.unit || '')}${p.tgl_kirim ? '<br>Target kirim: ' + TGL(p.tgl_kirim) : ''}</div><div class="row"><b class="num small">${RP(p.total)}</b><span class="spacer"></span><a class="btn btn-success btn-sm" href="#/bast-form/${p.id}">${I('clipcheck')} Periksa</a></div></div>`).join('')}</div>` : UI.empty('Tidak ada PO yang menunggu pemeriksaan', 'check')}</div>` : '') +
-      `<div class="card pad-0"><div class="filters" style="padding:14px 16px"><h3 style="flex:1">Riwayat BAST</h3><div class="input-ic" style="max-width:320px">${I('search')}<input class="input tinted" placeholder="Cari no. BAST / PO / vendor" value="${E(st.q)}" data-in="bast.q"></div></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>No. BAST</th><th>Referensi PO</th><th>Vendor</th><th>Tanggal</th><th>Kesimpulan</th><th>PPTK</th><th>Status</th><th></th></tr></thead><tbody>
-      ${pg.rows.map(b => `<tr class="clickable" data-act="go" data-href="bast/${b.id}"><td class="mono small">${E(b.nomor_bast || '(menunggu nomor)')}</td><td class="mono small">${E((Store.po(b.po_id) || {}).nomor_po || '-')}</td><td>${E(vName(b.vendor_id))}</td><td class="mono small">${TGL(b.tanggal)}</td><td class="small">${E(b.kesimpulan || '-')}</td><td class="small">${E(b.pptk_nama || '')}</td><td>${CHIP(b.status)}</td><td>${I('next')}</td></tr>`).join('') || `<tr><td colspan="8">${UI.empty('Belum ada BAST', 'clipcheck')}</td></tr>`}
-      </tbody></table></div>${UI.pager(pg, 'bast.page', 'BAST')}</div>`;
+      eyebrow: `<span class="tag">Penerimaan Barang</span> / TA ${YEAR}`, title: isVendor() ? 'BAPB Diterima' : 'Berita Acara Penerimaan Barang (BAPB)',
+      sub: isVendor() ? 'Berita acara penerimaan barang yang telah disahkan penanggung jawab ruangan.' : 'Pencatatan penerimaan & pemeriksaan barang — ditandatangani Penanggung Jawab Ruangan / Penerima, mengetahui PPTK.'
+    }) + (can('bastEdit') ? `<div class="card mb"><div class="card-head"><div class="ic" style="background:#d6f5df;color:var(--success)">${I('clipcheck')}</div><div style="flex:1"><h3>Surat Pesanan Siap Diterima (${ready.length})</h3><p>SP yang telah disetujui PPK dan menunggu penerimaan barang</p></div></div>
+      ${ready.length ? `<div class="grid g3">${ready.map(p => `<div class="act-item" style="margin:0"><div class="top"><b class="mono small">${E(p.nomor_po)}</b>${CHIP(p.status)}</div><div class="tt">${E(vName(p.vendor_id))}</div><div class="ds">${E(p.paket || p.kategori || '')} · ${E(p.unit || '')}${p.tgl_kirim ? '<br>Target kirim: ' + TGL(p.tgl_kirim) : ''}</div><div class="row"><b class="num small">${RP(p.total)}</b><span class="spacer"></span><a class="btn btn-success btn-sm" href="#/bast-form/${p.id}">${I('clipcheck')} Terima</a></div></div>`).join('')}</div>` : UI.empty('Tidak ada SP yang menunggu penerimaan', 'check')}</div>` : '') +
+      `<div class="card pad-0"><div class="filters" style="padding:14px 16px"><h3 style="flex:1">Riwayat BAPB</h3><div class="input-ic" style="max-width:320px">${I('search')}<input class="input tinted" placeholder="Cari no. BAPB / SP / vendor / ruangan" value="${E(st.q)}" data-in="bast.q"></div></div>
+      <div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>No. BAPB</th><th>Referensi SP</th><th>Vendor</th><th>Tanggal</th><th>Penerima / Ruangan</th><th>Kesimpulan</th><th>Status</th><th></th></tr></thead><tbody>
+      ${pg.rows.map(b => `<tr class="clickable" data-act="go" data-href="bast/${b.id}"><td class="mono small" data-l="No. BAPB">${E(b.nomor_bast || '(menunggu nomor)')}</td><td class="mono small" data-l="SP">${E((Store.po(b.po_id) || {}).nomor_po || '-')}</td><td data-l="Vendor">${E(vName(b.vendor_id))}</td><td class="mono small" data-l="Tanggal">${TGL(b.tanggal)}</td><td class="small" data-l="Penerima">${E(b.penerima_nama || '-')}${b.ruangan ? `<div class="xs muted">${E(b.ruangan)}</div>` : ''}</td><td class="small" data-l="Kesimpulan">${E(b.kesimpulan || '-')}</td><td data-l="Status">${CHIP(b.status)}</td><td>${I('next')}</td></tr>`).join('') || `<tr><td colspan="8">${UI.empty('Belum ada BAPB', 'clipcheck')}</td></tr>`}
+      </tbody></table></div>${UI.pager(pg, 'bast.page', 'BAPB')}</div>`;
     openFromParam(el, 'bast', param, Store.byId('bast', param), bastDrawer);
   }
 };
@@ -153,24 +158,31 @@ Act['bast.q'] = UI.debounce(el => { const s = ps('bast'); s.q = el.value; s.page
 Act['bast.page'] = el => { ps('bast').page = +el.dataset.page; App.refreshCurrent(); };
 function bastDrawer(id, onClose) {
   const b = Store.byId('bast', id); if (!b) return;
-  const p = Store.po(b.po_id) || {}, items = Store.bastItems(id);
-  const hasTpl = S.templates.some(t => t.jenis === 'BAST' && t.status === 'Aktif');
+  const p = Store.po(b.po_id) || {}, items = Store.bastItems(id), signed = b.status === 'Ditandatangani';
+  const tplB = Doc.activeTpl('BAPB'), tplP = Doc.activeTpl('BASTP');
   const m = UI.modal({
-    drawer: true, onClose, title: `<span class="mono">${E(b.nomor_bast || 'BAST')}</span>`, sub: 'PO ' + E(p.nomor_po || '-') + ' · ' + E(vName(b.vendor_id)),
-    body: `<div class="row wrap">${CHIP(b.status)}<span class="chip st-blue nodot">${E(b.kesimpulan || '-')}</span></div>
-      <div class="grid g2 mt" style="gap:12px">${[['TANGGAL PEMERIKSAAN', TGL(b.tanggal, 1)], ['NO. SURAT JALAN', b.no_surat_jalan], ['PPTK PEMERIKSA', b.pptk_nama], ['NIP', b.pptk_nip]].map(([k, v]) => `<div><div class="mono xs muted">${k}</div><div class="small">${E(v || '-')}</div></div>`).join('')}</div>
-      <h3 class="mt">Barang Diterima</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th>Lot / Exp</th><th class="num">PO</th><th class="num">Diterima</th><th>Kondisi</th></tr></thead><tbody>${items.map(d => `<tr><td>${E(d.nama)}<div class="sub">${E(d.catatan || '')}</div></td><td class="mono xs">${E(d.lot || '-')}<br>${E(d.exp || '')}</td><td class="num">${d.qty_po}</td><td class="num" style="color:${d.qty_diterima < d.qty_po ? 'var(--warn)' : 'var(--success-dark)'}">${d.qty_diterima} ${E(d.satuan)}</td><td class="small">${E(d.kondisi)}</td></tr>`).join('')}</tbody></table></div>
+    drawer: true, onClose, title: `<span class="mono">${E(b.nomor_bast || 'BAPB')}</span>`, sub: 'SP ' + E(p.nomor_po || '-') + ' · ' + E(vName(b.vendor_id)),
+    body: `<div class="row wrap">${CHIP(b.status)}<span class="chip st-blue nodot">${E(b.kesimpulan || '-')}</span>${b.nomor_bastp ? `<span class="chip nodot mono">BASTP ${E(b.nomor_bastp)}</span>` : ''}</div>
+      ${signed ? `<div class="doc-actions mt"><button class="btn" data-act="doc.open" data-jenis="BAPB" data-id="${b.id}">${I('print')} Cetak BAPB / PDF</button><button class="btn btn-outline" data-act="doc.open" data-jenis="BASTP" data-id="${b.id}">${I('print')} Cetak BAST Hasil Pekerjaan</button></div>` : `<div class="info-box mt">${I('info')}<span>Draft — dokumen dapat dicetak setelah BAPB disahkan. <button class="btn btn-ghost btn-xs" data-act="doc.open" data-jenis="BAPB" data-id="${b.id}">Pratinjau</button></span></div>`}
+      <div class="grid g2 mt" style="gap:12px">${[['TANGGAL PENERIMAAN', TGL(b.tanggal, 1)], ['NO. SURAT JALAN', b.no_surat_jalan], ['PENERIMA / PJ RUANGAN', b.penerima_nama], ['NIP PENERIMA', b.penerima_nip], ['RUANGAN', b.ruangan], ['MENGETAHUI (PPTK)', b.pptk_nama]].map(([k, v]) => `<div><div class="mono xs muted">${k}</div><div class="small">${E(v || '-')}</div></div>`).join('')}</div>
+      <div class="row wrap mt" style="gap:8px">${ttdStat('TTD Penerima', b.penerima_ttd_file_id, signed)}${ttdStat('TTD PPTK', b.pptk_ttd_file_id, signed)}</div>
+      <h3 class="mt">Barang Diterima</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th>Lot / Exp</th><th class="num">SP</th><th class="num">Diterima</th><th>Kondisi</th></tr></thead><tbody>${items.map(d => `<tr><td>${E(d.nama)}<div class="sub">${E(d.catatan || '')}</div></td><td class="mono xs">${E(d.lot || '-')}<br>${E(d.exp || '')}</td><td class="num">${d.qty_po}</td><td class="num" style="color:${d.qty_diterima < d.qty_po ? 'var(--warn)' : 'var(--success-dark)'}">${d.qty_diterima} ${E(d.satuan)}</td><td class="small">${E(d.kondisi)}</td></tr>`).join('')}</tbody></table></div>
       ${Array.isArray(b.checklist) && b.checklist.length ? `<h3 class="mt">Checklist Pemeriksaan</h3>${b.checklist.map(c => `<div class="small row" style="gap:6px;margin-top:4px"><span style="color:${c.ok ? 'var(--success)' : 'var(--danger)'}">${I(c.ok ? 'check' : 'x')}</span>${E(c.label)}</div>`).join('')}` : ''}
       ${b.catatan ? `<p class="small mt"><b>Catatan:</b> ${E(b.catatan)}</p>` : ''}
       <h3 class="mt">Berkas</h3>${(Array.isArray(b.foto) ? b.foto : []).map((f, i) => UI.driveUrl(f) ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(f)}">${I('camera', 'fi')}<span class="small" style="flex:1">Foto dokumentasi ${i + 1}</span>${I('ext')}</a>` : '').join('')}
-      ${b.ttd_file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(b.ttd_file_id)}">${I('sign', 'fi')}<span class="small" style="flex:1">Tanda tangan digital PPTK</span>${I('ext')}</a>` : ''}
-      ${b.doc_file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(b.doc_file_id)}">${I('pdf', 'fi')}<span class="small" style="flex:1">Dokumen BAST resmi (PDF)</span>${I('ext')}</a>` : ''}`,
-    foot: `${can('genDoc') && hasTpl && b.status === 'Ditandatangani' ? `<button class="btn btn-outline" data-act="doc.gen" data-jenis="BAST" data-id="${b.id}">${I('doc')} Generate Dokumen BAST</button>` : ''}<span class="spacer"></span>${can('bastEdit') && b.status === 'Draft' ? `<a class="btn" href="#/bast-form/b:${b.id}">${I('edit')} Lanjutkan Draft</a>` : ''}${can('invEdit') && b.status === 'Ditandatangani' && !S.invoice.some(i => i.bast_id === b.id && i.status !== 'Ditolak') ? `<a class="btn btn-success" href="#/invoice/new:${b.id}">${I('money')} Buat Invoice</a>` : ''}`
+      ${b.doc_file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(b.doc_file_id)}">${I('pdf', 'fi')}<span class="small" style="flex:1">PDF BAPB (Google Drive)</span>${I('ext')}</a>` : ''}
+      ${b.bastp_file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(b.bastp_file_id)}">${I('pdf', 'fi')}<span class="small" style="flex:1">PDF BAST Hasil Pekerjaan (Google Drive)</span>${I('ext')}</a>` : ''}`,
+    foot: `${can('genDoc') && signed && tplB ? `<button class="btn btn-ghost btn-sm" data-act="doc.gen" data-jenis="BAPB" data-id="${b.id}">${I('doc')} PDF BAPB → Drive</button>` : ''}${can('genDoc') && signed && tplP ? `<button class="btn btn-ghost btn-sm" data-act="doc.gen" data-jenis="BASTP" data-id="${b.id}">${I('doc')} PDF BASTP → Drive</button>` : ''}<span class="spacer"></span>${can('bastEdit') && b.status === 'Draft' ? `<a class="btn" href="#/bast-form/b:${b.id}">${I('edit')} Lanjutkan Draft</a>` : ''}${can('invEdit') && signed && !S.invoice.some(i => i.bast_id === b.id && i.status !== 'Ditolak') ? `<a class="btn btn-success" href="#/invoice/new:${b.id}">${I('money')} Buat Invoice</a>` : ''}`
   });
   m.el.addEventListener('click', e => { if (e.target.closest('a[href^="#/"]')) m.close(); });
 }
+function ttdStat(label, fileId, signed) {
+  const basah = S.settings.TTD_MODE === 'basah';
+  const t = !signed ? 'Belum disahkan' : fileId && !basah ? 'TTD gambar' : 'TTD basah';
+  return `<span class="chip nodot ${signed && fileId && !basah ? 'st-green' : ''}">${I('pen')} ${E(label)}: ${t}</span>`;
+}
 
-/* ---------- FORM BAST ---------- */
+/* ---------- FORM BAPB ---------- */
 const KONDISI = ['Baik & Berfungsi', 'Segel Utuh', 'Cacat Ringan', 'Rusak / Retur', 'Kadaluarsa Dekat'];
 const CHECKS = [
   ['Kesesuaian jumlah fisik dengan surat jalan vendor', 'Nomor surat jalan diverifikasi cocok dengan fisik kemasan.'],
@@ -179,14 +191,14 @@ const CHECKS = [
   ['Sertifikat Analisis (CoA) / garansi terlampir asli', 'Dokumen CoA/garansi pabrikan terlampir dalam paket.']
 ];
 Pages['bast-form'] = {
-  title: 'Input BAST', keep: true, roles: CAN.bastEdit,
+  title: 'Input BAPB', keep: true, roles: CAN.bastEdit,
   render(el, param) {
     let draft = null, poId = param;
     if (param && param.startsWith('b:')) { draft = Store.byId('bast', param.slice(2)); poId = draft && draft.po_id; }
     const ready = S.po.filter(p => ['Disetujui PPK', 'BAST Parsial'].includes(p.status) || (draft && p.id === draft.po_id));
     const po = poId ? Store.po(poId) : null;
     if (!po) {
-      el.innerHTML = `<a href="#/bast" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali</a>` + pageHead({ title: 'Input Berita Acara Serah Terima (BAST)' }) + `<div class="card"><div class="field"><label>Pilih dokumen PO yang akan diperiksa <span class="req">*</span></label><select class="select" data-ch="bf.po">${UI.opt(ready.map(p => ({ v: p.id, l: p.nomor_po + ' — ' + vName(p.vendor_id) + ' (' + (p.paket || p.kategori || '') + ')' })), '', 'Pilih PO…')}</select></div>${ready.length ? '' : '<p class="small muted mt-s">Belum ada PO berstatus Disetujui PPK.</p>'}</div>`;
+      el.innerHTML = `<a href="#/bast" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali</a>` + pageHead({ title: 'Input Berita Acara Penerimaan Barang (BAPB)' }) + `<div class="card"><div class="field"><label>Pilih Surat Pesanan yang barangnya diterima <span class="req">*</span></label><select class="select" data-ch="bf.po">${UI.opt(ready.map(p => ({ v: p.id, l: p.nomor_po + ' — ' + vName(p.vendor_id) + ' (' + (p.paket || p.kategori || '') + ')' })), '', 'Pilih SP…')}</select></div>${ready.length ? '' : '<p class="small muted mt-s">Belum ada SP berstatus Disetujui PPK.</p>'}</div>`;
       return;
     }
     const v = Store.vendor(po.vendor_id) || {};
@@ -194,65 +206,87 @@ Pages['bast-form'] = {
     const signedIds = new Set(S.bast.filter(b => b.po_id === po.id && b.status === 'Ditandatangani' && (!draft || b.id !== draft.id)).map(b => b.id));
     const got = {}; S.bastDetail.forEach(d => { if (signedIds.has(d.bast_id)) got[d.po_detail_id] = (got[d.po_detail_id] || 0) + d.qty_diterima; });
     const dItems = draft ? Store.bastItems(draft.id) : [];
+    const pjList = (S.penerima || []).filter(x => x.status !== 'Nonaktif');
+    const pj0 = draft && draft.penerima_id ? Store.byId('penerima', draft.penerima_id) : null;
     const d = el._bf = {
       id: draft ? draft.id : UI.uid(), po_id: po.id, tanggal: draft ? draft.tanggal : UI.iso(), no_surat_jalan: draft ? draft.no_surat_jalan : '', kesimpulan: draft ? draft.kesimpulan : '', catatan: draft ? draft.catatan : '',
       checklist: CHECKS.map((c, i) => ({ label: c[0], ok: draft && Array.isArray(draft.checklist) && draft.checklist[i] ? !!draft.checklist[i].ok : false })),
       foto: (draft && Array.isArray(draft.foto) ? draft.foto : []).map(f => ({ fileId: f, name: 'Foto tersimpan' })),
       items: pd.map(x => { const di = dItems.find(z => z.po_detail_id === x.id) || {}; const sisa = x.qty - (got[x.id] || 0); return { po_detail_id: x.id, nama: x.nama, spes: x.spesifikasi, qty_po: x.qty, sisa, satuan: x.satuan, qty_diterima: di.qty_diterima != null ? di.qty_diterima : sisa, kondisi: di.kondisi || 'Baik & Berfungsi', lot: di.lot || '', exp: di.exp || '', catatan: di.catatan || '' }; }),
-      signed: false
+      penerima_id: draft ? draft.penerima_id || '' : '', penerima_nama: draft ? draft.penerima_nama || '' : '', penerima_nip: draft ? draft.penerima_nip || '' : '',
+      penerima_jabatan: draft ? draft.penerima_jabatan || '' : '', ruangan: draft ? draft.ruangan || '' : (po.unit || ''), simpan_penerima: true, simpan_spesimen: true
     };
     const late = po.tgl_kirim ? -UI.daysTo(po.tgl_kirim) : null;
     const minFoto = Number(S.settings.MIN_FOTO_BAST || 0);
-    el.innerHTML = `<a href="#/bast" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali ke daftar BAST</a>` + pageHead({
-      eyebrow: `<span class="tag">Modul Pejabat Pelaksana Teknis Kegiatan (PPTK)</span> / Kontrak Fisik TA ${YEAR}`, title: 'Input Berita Acara Serah Terima (BAST)', extra: `<span class="chip st-blue nodot mono">${draft ? E(draft.nomor_bast) : 'Draft BAST-' + YEAR}</span>`,
-      sub: `<span class="chip st-green">Terverifikasi e-Katalog</span> Pencatatan hasil pemeriksaan fisik, volume, dan kelayakan barang yang diserahkan oleh rekanan penyedia.`,
-      actions: `<div class="card flat row" style="padding:10px 14px">${I('clipcheck')}<div><div class="mono xs muted">ID FORMULIR BAST</div><b class="mono small">${E(d.id.slice(0, 8).toUpperCase())}</b></div></div>`
-    }) + `<div class="card"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">1</span><h3>Referensi Purchase Order</h3><span class="ok-t">${I('check')} Terhubung dengan SIM-RS & GAS</span></div>
-      <div class="mono xs mb" style="letter-spacing:.06em">PILIH DOKUMEN PO YANG AKAN DIPERIKSA <span style="color:var(--danger)">*</span></div>
-      <div class="row"><select class="select tinted" style="flex:1" data-ch="bf.po">${UI.opt(ready.map(p => ({ v: p.id, l: p.nomor_po + ' — ' + vName(p.vendor_id) + ' (' + (p.paket || p.kategori || '') + ')' })), po.id)}</select><button class="btn btn-soft" data-act="po.print" data-id="${po.id}">${I('eye')} Lihat File PO Asli</button></div>
-      <div class="grid g4 act-item mt" style="gap:12px;grid-template-columns:repeat(5,minmax(0,1fr))">${[['VENDOR PENYEDIA', E(v.nama || '-') + `<div class="xs muted">NIB: ${E(v.nib || '-')}</div>`], ['KONTAK REKANAN', `<span class="mono small">${E(v.telepon || '-')}</span><div class="xs muted">${E(v.email || '')}</div>`], ['UNIT PEMESAN', E(po.unit || '-')], ['NILAI TOTAL PO', `<b style="font-family:var(--serif);font-size:17px;color:var(--primary-deep)">${RP(po.total)}</b><div class="mono xs" style="color:var(--success-dark)">Termasuk PPN ${E(S.settings.PPN_RATE || 11)}%</div>`], ['TGL PENGIRIMAN', po.tgl_kirim ? TGL(po.tgl_kirim, 1) + `<div class="xs" style="color:${late > 0 ? 'var(--danger)' : 'var(--success-dark)'}">${late > 0 ? 'Terlambat ' + late + ' hari' : 'Tiba tepat waktu'}</div>` : '-']].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small">${x}</div></div>`).join('')}</div></div>
-    <div class="card mt"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">2</span><h3>Detail Barang Diterima & Pemeriksaan Fisik</h3><span class="mono xs muted">${I('sliders')} Pastikan kuantitas diterima diverifikasi berdasar surat jalan fisik</span></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th style="min-width:180px">Nama Barang / Jasa</th><th style="min-width:150px">Spesifikasi / Lot No</th><th class="num">Qty PO</th><th style="width:110px">Qty Diterima</th><th style="min-width:170px">Kondisi Fisik</th><th style="min-width:180px">Catatan Pemeriksaan PPTK</th></tr></thead><tbody id="bf-items">${d.items.map((it, i) => `<tr>
+    const myTtd = Store.myTtd();
+    el.innerHTML = `<a href="#/bast" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali ke daftar BAPB</a>` + pageHead({
+      eyebrow: `<span class="tag">Penerimaan Barang</span> / TA ${YEAR}`, title: 'Berita Acara Penerimaan Barang (BAPB)', extra: `<span class="chip st-blue nodot mono">${draft ? E(draft.nomor_bast) : 'Draft BAPB-' + YEAR}</span>`,
+      sub: 'Pencatatan penerimaan & pemeriksaan fisik barang. Ditandatangani Penanggung Jawab Ruangan / Penerima, mengetahui PPTK.',
+      actions: `<div class="card flat row" style="padding:10px 14px">${I('clipcheck')}<div><div class="mono xs muted">ID FORMULIR</div><b class="mono small">${E(d.id.slice(0, 8).toUpperCase())}</b></div></div>`
+    }) + `<div class="card"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">1</span><h3>Referensi Surat Pesanan</h3></div>
+      <div class="mono xs mb" style="letter-spacing:.06em">PILIH SURAT PESANAN <span style="color:var(--danger)">*</span></div>
+      <div class="row wrap"><select class="select tinted" style="flex:1;min-width:220px" data-ch="bf.po">${UI.opt(ready.map(p => ({ v: p.id, l: p.nomor_po + ' — ' + vName(p.vendor_id) + ' (' + (p.paket || p.kategori || '') + ')' })), po.id)}</select><button class="btn btn-soft" data-act="po.print" data-id="${po.id}">${I('eye')} Lihat SP</button></div>
+      <div class="grid act-item mt bf-ref" style="gap:12px">${[['VENDOR PENYEDIA', E(v.nama || '-') + `<div class="xs muted">NIB: ${E(v.nib || '-')}</div>`], ['KONTAK REKANAN', `<span class="mono small">${E(v.telepon || '-')}</span><div class="xs muted">${E(v.email || '')}</div>`], ['UNIT PEMESAN', E(po.unit || '-')], ['NILAI TOTAL SP', `<b style="font-family:var(--serif);font-size:17px;color:var(--primary-deep)">${RP(po.total)}</b>`], ['TGL PENGIRIMAN', po.tgl_kirim ? TGL(po.tgl_kirim, 1) + `<div class="xs" style="color:${late > 0 ? 'var(--danger)' : 'var(--success-dark)'}">${late > 0 ? 'Terlambat ' + late + ' hari' : 'Sesuai jadwal'}</div>` : '-']].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small">${x}</div></div>`).join('')}</div></div>
+    <div class="card mt"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">2</span><h3>Detail Barang Diterima & Pemeriksaan Fisik</h3></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th style="min-width:180px">Nama Barang / Jasa</th><th style="min-width:150px">Lot / Exp</th><th class="num">Qty SP</th><th style="width:110px">Qty Diterima</th><th style="min-width:170px">Kondisi Fisik</th><th style="min-width:180px">Catatan Pemeriksaan</th></tr></thead><tbody id="bf-items">${d.items.map((it, i) => `<tr>
         <td>${E(it.nama)}<div class="mono xs muted">${E(it.spes || '')}</div></td>
         <td><input class="input input-sm mono" placeholder="Lot/Batch" value="${E(it.lot)}" data-in="bf.it" data-i="${i}" data-f="lot"><input class="input input-sm mono" style="margin-top:4px" placeholder="Exp: MM/YYYY" value="${E(it.exp)}" data-in="bf.it" data-i="${i}" data-f="exp"></td>
         <td class="num"><b>${it.qty_po}</b> <span class="small">${E(it.satuan)}</span>${it.sisa < it.qty_po ? `<div class="xs" style="color:var(--warn)">sisa ${it.sisa}</div>` : ''}</td>
-        <td><input class="input input-sm mono center" style="background:var(--tint)" type="number" min="0" max="${it.sisa}" value="${it.qty_diterima}" data-in="bf.it" data-i="${i}" data-f="qty_diterima"></td>
+        <td><input class="input input-sm mono center" style="background:var(--tint)" type="number" inputmode="numeric" min="0" max="${it.sisa}" value="${it.qty_diterima}" data-in="bf.it" data-i="${i}" data-f="qty_diterima"></td>
         <td><select class="select input-sm" style="background:var(--success-tint)" data-ch="bf.it" data-i="${i}" data-f="kondisi">${UI.opt(KONDISI, it.kondisi)}</select></td>
         <td><input class="input input-sm" value="${E(it.catatan)}" placeholder="Kemasan utuh, segel baik…" data-in="bf.it" data-i="${i}" data-f="catatan"></td></tr>`).join('')}</tbody></table></div>
-      <div class="act-item row mt" id="bf-recon"></div></div>
+      <div class="act-item row wrap mt" id="bf-recon"></div></div>
     <div class="grid g-3-2 mt">
       <div class="card"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">3</span><h3>Checklist Pemeriksaan & Dokumentasi Foto</h3></div>
         <div class="field mb"><label>Nomor Surat Jalan Vendor</label><input class="input mono" value="${E(d.no_surat_jalan)}" data-in="bf.f" data-f="no_surat_jalan" placeholder="SJ-${YEAR}/…"></div>
         ${CHECKS.map((c, i) => `<label class="check check-card"><input type="checkbox" ${d.checklist[i].ok ? 'checked' : ''} data-ch="bf.chk" data-i="${i}"><div><b>${E(c[0])}</b><div class="small">${E(c[1])}</div></div></label>`).join('')}
-        <div class="grid g2 mt" style="gap:12px"><div class="field"><label>Kesimpulan Hasil Pemeriksaan PPTK <span class="req">*</span></label><select class="select" style="background:var(--success-tint);font-weight:500" data-ch="bf.f" data-f="kesimpulan">${UI.opt(['DISETUJUI / DITERIMA LENGKAP', 'DITERIMA SEBAGIAN', 'DITOLAK / RETUR KE VENDOR'], d.kesimpulan, 'Pilih kesimpulan…')}</select></div><div class="field"><label>Tanggal Pemeriksaan</label><input type="date" class="input" value="${E(d.tanggal)}" data-in="bf.f" data-f="tanggal"></div></div>
+        <div class="grid g2 mt" style="gap:12px"><div class="field"><label>Kesimpulan Hasil Pemeriksaan <span class="req">*</span></label><select class="select" style="background:var(--success-tint);font-weight:500" data-ch="bf.f" data-f="kesimpulan">${UI.opt(['DISETUJUI / DITERIMA LENGKAP', 'DITERIMA SEBAGIAN', 'DITOLAK / RETUR KE VENDOR'], d.kesimpulan, 'Pilih kesimpulan…')}</select></div><div class="field"><label>Tanggal Penerimaan</label><input type="date" class="input" value="${E(d.tanggal)}" data-in="bf.f" data-f="tanggal"></div></div>
         <div class="field mt"><label>Catatan Umum</label><textarea class="textarea" rows="2" data-in="bf.f" data-f="catatan">${E(d.catatan)}</textarea></div>
-        <div class="row mt"><b class="mono xs" style="flex:1;letter-spacing:.06em">FOTO DOKUMENTASI PENERIMAAN (WAJIB MIN. ${minFoto} FOTO)</b><span class="mono xs" style="color:var(--success-dark)" id="bf-fcnt"></span></div>
+        <div class="row mt"><b class="mono xs" style="flex:1;letter-spacing:.06em">FOTO DOKUMENTASI PENERIMAAN (MIN. ${minFoto} FOTO)</b><span class="mono xs" style="color:var(--success-dark)" id="bf-fcnt"></span></div>
         <div class="drop mt-s" data-act="bf.pick">${I('camera')}<div>Tarik file bukti foto atau <u>Klik untuk Telusuri</u></div><div class="xs muted">JPG, PNG, atau HEIC · dikompres otomatis sebelum diunggah</div><input type="file" id="bf-files" accept="image/*" capture="environment" multiple hidden></div>
         <div class="thumbs" id="bf-thumbs"></div></div>
-      <div class="card"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">4</span><h3>Pengesahan PPTK</h3></div>
-        <p class="small" style="color:var(--ink-2)">Dengan menandatangani lembar ini, Pejabat Pelaksana Teknis Kegiatan menyatakan barang di atas telah diterima, diperiksa, dan sesuai dengan spesifikasi kontrak.</p>
-        <div class="row mt"><b class="mono xs" style="flex:1;letter-spacing:.06em">KANVAS TANDA TANGAN DIGITAL</b><button class="btn btn-ghost btn-xs" style="color:var(--danger)" data-act="bf.clear">${I('refresh')} Reset</button></div>
-        <div class="sigpad mt-s"><span class="lbl">PAD TTD ELEKTRONIK</span><canvas id="bf-sig"></canvas><div class="row mono xs muted" style="padding:6px 12px;justify-content:space-between"><span>Goreskan TTD via Mouse/Stylus/Jari</span><span id="bf-sigst">● Siap Rekam</span></div></div>
-        <div class="act-item mt"><b style="font-family:var(--serif);font-size:16px">${E(S.user.nama)}</b><div class="mono xs">NIP: ${E(S.user.nip || '-')} • <span style="color:var(--success-dark)">Aktif</span></div><div class="xs">Jabatan: ${E(S.user.jabatan || ROLE_LABEL[S.user.role])}</div></div>
-        <div class="info-box mt">${I('info')}<span>Setelah disimpan, status PO berubah otomatis (BAST Terbit / Parsial), rekanan & Pejabat Pengadaan menerima notifikasi${S.templates.some(t => t.jenis === 'BAST' && t.status === 'Aktif') ? ', dan PDF BAST di-generate ke Google Drive' : ''}.</span></div></div>
+      <div class="card"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">4</span><h3>Pengesahan Penerimaan</h3></div>
+        <p class="small" style="color:var(--ink-2)">BAPB ditandatangani oleh <b>Penanggung Jawab Ruangan / Penerima</b> barang, dan <b>Mengetahui PPTK</b>.</p>
+        <div class="field mt"><label>Penanggung Jawab Ruangan / Penerima <span class="req">*</span></label><select class="select" data-ch="bf.pj">${UI.opt([...pjList.map(x => ({ v: x.id, l: x.nama + (x.ruangan ? ' — ' + x.ruangan : '') })), { v: '__baru', l: '+ Penerima baru (isi manual)…' }], d.penerima_id || (d.penerima_nama ? '__baru' : ''), 'Pilih penanggung jawab…')}</select></div>
+        <div id="bf-pjf" class="stack mt-s"></div>
+        <div class="mono xs mt" style="letter-spacing:.06em">TANDA TANGAN PENERIMA</div>
+        <div id="bf-pjttd" class="mt-s"></div>
+        <label class="check mt-s" id="bf-spes-w"><input type="checkbox" checked data-ch="bf.flag" data-f="simpan_spesimen"> <span class="small">Simpan TTD ini sebagai spesimen penerima (dipakai otomatis berikutnya)</span></label>
+        <div class="act-item mt"><div class="mono xs muted">MENGETAHUI — PPTK</div><b style="font-family:var(--serif);font-size:16px">${E(S.user.nama)}</b><div class="mono xs">NIP: ${E(S.user.nip || '-')}</div>
+          <button class="btn btn-ghost btn-xs mt-s" data-act="me.ttd" style="color:${myTtd ? 'var(--success-dark)' : 'var(--warn)'}">${I('pen')} ${myTtd ? (S.settings.TTD_MODE === 'basah' ? 'Spesimen ada · mode cetak TTD basah' : 'TTD gambar Anda dibubuhkan otomatis') : 'Belum ada spesimen TTD — unggah (opsional)'}</button></div>
+        <div class="info-box mt">${I('info')}<span>Setelah disahkan, status SP berubah otomatis (Diterima / Diterima Sebagian), rekanan menerima notifikasi, dan BAPB + BAST Hasil Pekerjaan siap dicetak PDF.</span></div></div>
     </div>
-    <div class="sticky-bar"><span style="color:var(--primary)">${I('refresh')}</span><div class="small"><b>Sinkronisasi Otomatis Dokumen BAST</b><div class="xs muted">Dokumen BAST PDF resmi otomatis di-generate ke Google Drive setelah ditandatangani.</div></div><span class="spacer"></span><a class="btn btn-outline" href="#/bast" data-act="bf.cancel">Batal</a><button class="btn btn-outline" data-act="bf.save" data-sign="0">Simpan Draft</button><button class="btn" data-act="bf.save" data-sign="1">${I('clipcheck')} Simpan & Generate Dokumen BAST</button></div>`;
-    bfRecon(el); bfThumbs(el); bfSignature(el);
+    <div class="sticky-bar"><span style="color:var(--primary)">${I('clipcheck')}</span><div class="small hide-sm"><b>Sahkan BAPB</b><div class="xs muted">Dokumen dapat dicetak / disimpan PDF setelah disahkan.</div></div><span class="spacer"></span><a class="btn btn-outline" href="#/bast" data-act="bf.cancel">Batal</a><button class="btn btn-outline" data-act="bf.save" data-sign="0">Simpan Draft</button><button class="btn" data-act="bf.save" data-sign="1">${I('clipcheck')} Sahkan BAPB</button></div>`;
+    bfRecon(el); bfThumbs(el); bfPenerima(el, true);
     el.querySelector('#bf-files').onchange = e => { bfUpload(el, [...e.target.files]); e.target.value = ''; };
     const drop = el.querySelector('.drop');
     drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); }; drop.ondragleave = () => drop.classList.remove('over');
     drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); bfUpload(el, [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'))); };
   }
 };
+/** Isian penerima + pemilih TTD (spesimen master / gambar / unggah / kosong) */
+function bfPenerima(el, first) {
+  const d = el._bf, pj = d.penerima_id ? Store.byId('penerima', d.penerima_id) : null;
+  const baru = !pj && (d.penerima_nama || el.querySelector('[data-ch="bf.pj"]').value === '__baru');
+  const box = el.querySelector('#bf-pjf');
+  if (pj && !first) { d.penerima_nama = pj.nama; d.penerima_nip = pj.nip || ''; d.penerima_jabatan = pj.jabatan || ''; d.ruangan = pj.ruangan || d.ruangan; }
+  box.innerHTML = pj || baru ? `<div class="grid g2" style="gap:10px"><div class="field"><label>Nama lengkap & gelar</label><input class="input" value="${E(d.penerima_nama)}" data-in="bf.f" data-f="penerima_nama" ${pj ? 'readonly' : ''}></div><div class="field"><label>NIP</label><input class="input mono" inputmode="numeric" value="${E(d.penerima_nip)}" data-in="bf.f" data-f="penerima_nip"></div><div class="field"><label>Jabatan</label><input class="input" value="${E(d.penerima_jabatan)}" placeholder="Penanggung Jawab Ruangan" data-in="bf.f" data-f="penerima_jabatan"></div><div class="field"><label>Ruangan / Unit</label><input class="input" value="${E(d.ruangan)}" data-in="bf.f" data-f="ruangan"></div></div>
+    ${baru && can('penerima') ? `<label class="check"><input type="checkbox" ${d.simpan_penerima ? 'checked' : ''} data-ch="bf.flag" data-f="simpan_penerima"> <span class="small">Simpan ke master Penanggung Jawab Ruangan</span></label>` : ''}` : '';
+  const spes = pj ? pj.ttd_file_id || '' : '';
+  const modes = pj ? ['spesimen', 'pad', 'upload', 'kosong'] : ['pad', 'upload', 'kosong'];
+  const basah = S.settings.TTD_MODE === 'basah';
+  el._pjTtd = UI.ttdPicker(el.querySelector('#bf-pjttd'), { spesimen: spes, modes, value: basah ? 'kosong' : spes ? 'spesimen' : 'pad' });
+  const sw = el.querySelector('#bf-spes-w'); if (sw) sw.classList.toggle('hidden', !(pj || (baru && d.simpan_penerima)));
+}
 function bfRecon(el) {
   const d = el._bf; const po = d.items.reduce((a, i) => a + i.sisa, 0), got = d.items.reduce((a, i) => a + (Number(i.qty_diterima) || 0), 0);
   const bad = d.items.filter(i => Number(i.qty_diterima) !== i.sisa || !/baik|segel/i.test(i.kondisi)).length;
-  el.querySelector('#bf-recon').innerHTML = `<span style="color:${bad ? 'var(--warn)' : 'var(--success)'}">${I(bad ? 'alert' : 'check')}</span><span class="small" style="flex:1">Semua ${d.items.length} item PO telah diperiksa fisik: <b>${po ? Math.round(got / po * 100) : 0}% Kuantitas Sesuai (${got}/${po} Unit)</b></span><span class="mono xs">Status Rekonsiliasi: <b style="color:${bad ? 'var(--warn)' : 'var(--success-dark)'}">${bad ? bad + ' DISCREPANCY' : 'ZERO DISCREPANCY'}</b></span>`;
+  el.querySelector('#bf-recon').innerHTML = `<span style="color:${bad ? 'var(--warn)' : 'var(--success)'}">${I(bad ? 'alert' : 'check')}</span><span class="small" style="flex:1">${d.items.length} item diperiksa: <b>${po ? Math.round(got / po * 100) : 0}% kuantitas sesuai (${got}/${po} unit)</b></span><span class="mono xs">Rekonsiliasi: <b style="color:${bad ? 'var(--warn)' : 'var(--success-dark)'}">${bad ? bad + ' SELISIH' : 'SESUAI'}</b></span>`;
 }
 function bfThumbs(el) {
   const d = el._bf, min = Number(S.settings.MIN_FOTO_BAST || 0);
   el.querySelector('#bf-fcnt').textContent = d.foto.filter(f => f.fileId).length + ' / ' + min + ' FILE TERUNGGAH';
-  el.querySelector('#bf-thumbs').innerHTML = d.foto.map((f, i) => `<div class="thumb">${f.preview ? `<img src="${f.preview}" alt="">` : `<div style="height:90px;display:grid;place-items:center;background:#fff;border-radius:6px">${I('camera')}</div>`}${!f.fileId && !f.err ? '<div class="prog">Mengunggah…</div>' : ''}<button class="x" data-act="bf.rmfoto" data-i="${i}">×</button><div class="mono ellipsis" style="margin-top:4px">${E(f.name)}</div><div class="mono" style="color:${f.err ? 'var(--danger)' : 'var(--muted)'}">${f.err ? 'Gagal' : f.size ? UI.fsize(f.size) + ' · ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB' : ''}</div></div>`).join('');
+  el.querySelector('#bf-thumbs').innerHTML = d.foto.map((f, i) => `<div class="thumb">${f.preview ? `<img src="${f.preview}" alt="">` : `<div style="height:90px;display:grid;place-items:center;background:#fff;border-radius:6px">${I('camera')}</div>`}${!f.fileId && !f.err ? '<div class="prog">Mengunggah…</div>' : ''}<button class="x" data-act="bf.rmfoto" data-i="${i}">×</button><div class="mono ellipsis" style="margin-top:4px">${E(f.name)}</div><div class="mono" style="color:${f.err ? 'var(--danger)' : 'var(--muted)'}">${f.err ? 'Gagal' : f.size ? UI.fsize(f.size) : ''}</div></div>`).join('');
 }
 async function bfUpload(el, files) {
   const d = el._bf, po = Store.po(d.po_id);
@@ -260,53 +294,55 @@ async function bfUpload(el, files) {
     const rec = { name: f.name, size: f.size }; d.foto.push(rec); bfThumbs(el);
     try {
       const c = await UI.compressImage(f, 1400, .75); rec.preview = c.preview; rec.size = Math.round(c.base64.length * .75); bfThumbs(el);
-      const r = await API.call('uploadFile', { po_id: po.id, vendor_id: po.vendor_id, base64: c.base64, name: 'BAST_' + c.name, mime: c.mime }, { timeout: 120000 });
+      const r = await API.call('uploadFile', { po_id: po.id, vendor_id: po.vendor_id, base64: c.base64, name: 'BAPB_' + c.name, mime: c.mime }, { timeout: 120000 });
       rec.fileId = r.data[0].fileId;
     } catch (e) { rec.err = e.message; UI.toast('Upload ' + f.name + ' gagal: ' + e.message, 'err'); }
     if (document.body.contains(el)) bfThumbs(el);
   }));
 }
-function bfSignature(el) {
-  const c = el.querySelector('#bf-sig'), ctx = c.getContext('2d');
-  const fit = () => { const r = c.getBoundingClientRect(); const img = el._bf.signed ? c.toDataURL() : null; c.width = r.width * devicePixelRatio; c.height = r.height * devicePixelRatio; ctx.scale(devicePixelRatio, devicePixelRatio); ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#0c1e25'; if (img) { const i = new Image(); i.onload = () => ctx.drawImage(i, 0, 0, r.width, r.height); i.src = img; } };
-  setTimeout(fit, 30);
-  let draw = false, last = null;
-  const pos = e => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  c.onpointerdown = e => { draw = true; last = pos(e); c.setPointerCapture(e.pointerId); };
-  c.onpointermove = e => { if (!draw) return; const p = pos(e); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; el._bf.signed = true; el.querySelector('#bf-sigst').textContent = '● Tertanda'; };
-  c.onpointerup = () => { draw = false; };
-}
 Act['bf.po'] = el => App.go('bast-form/' + el.value);
 Act['bf.it'] = el => { const sec = el.closest('section'), it = sec._bf.items[+el.dataset.i]; let v = el.value; if (el.dataset.f === 'qty_diterima') { v = Math.max(0, Number(v) || 0); el.classList.toggle('invalid', v > it.sisa); } it[el.dataset.f] = v; bfRecon(sec); };
 Act['bf.f'] = el => { el.closest('section')._bf[el.dataset.f] = el.value; };
+Act['bf.flag'] = el => { const sec = el.closest('section'); sec._bf[el.dataset.f] = el.checked; if (el.dataset.f === 'simpan_penerima') { const sw = sec.querySelector('#bf-spes-w'); if (sw) sw.classList.toggle('hidden', !el.checked); } };
+Act['bf.pj'] = el => {
+  const sec = el.closest('section'), d = sec._bf;
+  if (el.value === '__baru') { d.penerima_id = ''; d.penerima_nama = ''; d.penerima_nip = ''; d.penerima_jabatan = 'Penanggung Jawab Ruangan'; }
+  else if (!el.value) { d.penerima_id = ''; d.penerima_nama = ''; }
+  else d.penerima_id = el.value;
+  bfPenerima(sec, false);
+};
 Act['bf.chk'] = el => { el.closest('section')._bf.checklist[+el.dataset.i].ok = el.checked; };
 Act['bf.pick'] = el => el.closest('section').querySelector('#bf-files').click();
 Act['bf.rmfoto'] = el => { const sec = el.closest('section'); sec._bf.foto.splice(+el.dataset.i, 1); bfThumbs(sec); };
-Act['bf.clear'] = el => { const sec = el.closest('section'), c = sec.querySelector('#bf-sig'); c.getContext('2d').clearRect(0, 0, c.width, c.height); sec._bf.signed = false; sec.querySelector('#bf-sigst').textContent = '● Siap Rekam'; };
 Act['bf.cancel'] = () => App.invalidate('bast-form');
 Act['bf.save'] = el => {
   const sec = el.closest('section'), d = sec._bf, sign = el.dataset.sign === '1';
   const minFoto = Number(S.settings.MIN_FOTO_BAST || 0);
   const over = d.items.find(i => Number(i.qty_diterima) > i.sisa);
-  if (over) { UI.toast('Qty diterima ' + over.nama + ' melebihi sisa PO (' + over.sisa + ')', 'err'); return; }
+  if (over) { UI.toast('Qty diterima ' + over.nama + ' melebihi sisa SP (' + over.sisa + ')', 'err'); return; }
   if (d.foto.some(f => !f.fileId && !f.err)) { UI.toast('Tunggu hingga semua foto selesai diunggah', 'warn'); return; }
   const foto = d.foto.filter(f => f.fileId).map(f => f.fileId);
+  const ttd = sec._pjTtd ? sec._pjTtd.get() : { mode: 'kosong' };
   if (sign) {
     if (!d.kesimpulan) { UI.toast('Pilih kesimpulan hasil pemeriksaan', 'err'); return; }
     if (foto.length < minFoto) { UI.toast('Foto dokumentasi minimal ' + minFoto + ' berkas (baru ' + foto.length + ')', 'err'); return; }
-    if (!d.signed) { UI.toast('Bubuhkan tanda tangan digital pada kanvas', 'err'); sec.querySelector('.sigpad').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    if (!String(d.penerima_nama || '').trim()) { UI.toast('Isi Penanggung Jawab Ruangan / Penerima', 'err'); sec.querySelector('[data-ch="bf.pj"]').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
     if (d.items.every(i => !Number(i.qty_diterima))) { UI.toast('Belum ada barang yang diterima', 'err'); return; }
   }
   const po = Store.po(d.po_id);
-  const payload = { id: d.id, po_id: d.po_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, sign, items: d.items.map(i => ({ po_detail_id: i.po_detail_id, qty_diterima: Number(i.qty_diterima) || 0, kondisi: i.kondisi, lot: i.lot, exp: i.exp, catatan: i.catatan })) };
-  if (sign) payload.ttd_base64 = sec.querySelector('#bf-sig').toDataURL('image/png');
+  const payload = {
+    id: d.id, po_id: d.po_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, sign,
+    penerima_id: d.penerima_id, penerima_nama: String(d.penerima_nama || '').trim(), penerima_nip: d.penerima_nip, penerima_jabatan: d.penerima_jabatan, ruangan: d.ruangan,
+    simpan_penerima: !d.penerima_id && !!d.simpan_penerima, simpan_spesimen: !!d.simpan_spesimen, penerima_ttd_mode: ttd.mode, penerima_ttd_base64: ttd.base64 || '',
+    items: d.items.map(i => ({ po_detail_id: i.po_detail_id, qty_diterima: Number(i.qty_diterima) || 0, kondisi: i.kondisi, lot: i.lot, exp: i.exp, catatan: i.catatan }))
+  };
   const existed = Store.byId('bast', d.id);
   const pdMap = {}; Store.poItems(po.id).forEach(x => pdMap[x.id] = x);
-  const localBast = { ...(existed || {}), id: d.id, nomor_bast: existed ? existed.nomor_bast : '', po_id: po.id, vendor_id: po.vendor_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, pptk_nama: S.user.nama, pptk_nip: S.user.nip, status: sign ? 'Ditandatangani' : 'Draft', created_at: existed ? existed.created_at : new Date().toISOString() };
+  const localBast = { ...(existed || {}), id: d.id, nomor_bast: existed ? existed.nomor_bast : '', po_id: po.id, vendor_id: po.vendor_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, pptk_nama: S.user.nama, pptk_nip: S.user.nip, penerima_id: d.penerima_id, penerima_nama: payload.penerima_nama, penerima_nip: d.penerima_nip, penerima_jabatan: d.penerima_jabatan, ruangan: d.ruangan, status: sign ? 'Ditandatangani' : 'Draft', created_at: existed ? existed.created_at : new Date().toISOString() };
   let oldDet, oldPo;
   const full = d.items.every(i => Number(i.qty_diterima) >= i.sisa);
   API.mutate({
-    label: sign ? 'Tanda tangan BAST' : 'Simpan draft BAST',
+    label: sign ? 'Pengesahan BAPB' : 'Simpan draft BAPB',
     apply: () => {
       oldDet = Store.removeWhere('bastDetail', x => x.bast_id === d.id);
       Store.upsertMany('bastDetail', payload.items.map(i => ({ ...i, id: UI.uid(), bast_id: d.id, nama: pdMap[i.po_detail_id].nama, qty_po: pdMap[i.po_detail_id].qty, satuan: pdMap[i.po_detail_id].satuan, harga: pdMap[i.po_detail_id].harga })));
@@ -318,7 +354,8 @@ Act['bf.save'] = el => {
     onSuccess: r => {
       Store.upsert('bast', r.data.bast); Store.removeWhere('bastDetail', x => x.bast_id === d.id); Store.upsertMany('bastDetail', r.data.details);
       if (r.data.po) Store.upsert('po', r.data.po);
-      if (sign) genDocument('BAST', r.data.bast.id, { silent: true, manual: {} });
+      if (r.data.penerima) Store.upsert('penerima', r.data.penerima);
+      if (sign && Doc.activeTpl('BAPB') && String(Doc.activeTpl('BAPB').is_default) !== '1') genDocument('BAPB', r.data.bast.id, { silent: true, manual: {} });
     }
   });
   App.invalidate('bast-form');
@@ -339,7 +376,7 @@ Pages.invoice = {
     const danas = [...new Set(S.invoice.map(i => i.sumber_dana).filter(Boolean))];
     const rate = S.settings;
     el.innerHTML = pageHead({
-      eyebrow: `<span class="tag navy">Modul Keuangan & Pembayaran BLUD</span> // T.A. ${YEAR} • Terintegrasi SIPD & BAST Digital`, title: isVendor() ? 'Tagihan Saya' : 'Invoice & Pembayaran BLUD',
+      eyebrow: `<span class="tag navy">Modul Keuangan & Pembayaran BLUD</span> // T.A. ${YEAR} • Terintegrasi SIPD & BAPB Digital`, title: isVendor() ? 'Tagihan Saya' : 'Invoice & Pembayaran BLUD',
       sub: isVendor() ? 'Status verifikasi dan pencairan tagihan perusahaan Anda.' : `Verifikasi dokumen penagihan vendor, pemotongan pajak PPh/PPN, dan penerbitan rekomendasi SP2D ${E(S.settings.RS_NAMA_LENGKAP || '')}.`,
       actions: `<button class="btn btn-outline" data-act="inv.export">${I('down')} Unduh Rekap Pajak & SP2D</button>${can('invEdit') ? `<button class="btn" data-act="inv.new">${I('plus')} Buat Draf Invoice Baru</button>` : ''}`
     }) + `<div class="grid g4">
@@ -348,7 +385,7 @@ Pages.invoice = {
       ${kpi({ lbl: 'Disetujui / Siap Terbit SP2D', val: by('Disetujui').length + ' Invoice', ico: 'shield', ic: 'g', foot: `<span class="tag-mini" style="background:var(--success-tint);color:var(--success-dark)">${RP(sum(by('Disetujui')))}</span> Lolos validasi`, fc: 'muted' })}
       ${kpi({ lbl: 'Ditolak / Revisi Berkas', val: by('Ditolak').length + ' Invoice', ico: 'alert', ic: 'r', foot: 'Menunggu revisi vendor', fc: 'warn' })}
     </div>
-    ${isVendor() ? '' : `<div class="card mt row wrap" style="gap:16px"><div class="ic avatar a4" style="width:44px;height:44px">${I('chart')}</div><div style="flex:1;min-width:260px"><h3>Automasi Perhitungan Pajak BLUD <span class="chip st-green nodot">Formula ${YEAR} Aktif</span></h3><p class="small muted" style="margin:4px 0 0">PPN ${E(rate.PPN_RATE)}% dan PPh Pasal 22 (${E(rate.PPH22_RATE)}%) dihitung otomatis dari nilai barang diterima pada BAST (bukan nilai PO). Netto = DPP + PPN − PPN dipungut − PPh 22.</p></div>
+    ${isVendor() ? '' : `<div class="card mt row wrap" style="gap:16px"><div class="ic avatar a4" style="width:44px;height:44px">${I('chart')}</div><div style="flex:1;min-width:260px"><h3>Automasi Perhitungan Pajak BLUD <span class="chip st-green nodot">Formula ${YEAR} Aktif</span></h3><p class="small muted" style="margin:4px 0 0">PPN ${E(rate.PPN_RATE)}% dan PPh Pasal 22 (${E(rate.PPH22_RATE)}%) dihitung otomatis dari nilai barang diterima pada BAPB (bukan nilai SP). Netto = DPP + PPN − PPN dipungut − PPh 22.</p></div>
       <div class="stack" style="min-width:200px"><div class="act-item" style="padding:8px 12px"><div class="mono xs muted">Invoice jatuh tempo ≤ 7 hari</div><b class="mono">${S.invoice.filter(i => !['Dibayar', 'Ditolak'].includes(i.status) && UI.daysTo(i.jatuh_tempo) <= 7).length} tagihan</b></div>${can('admin') ? `<a class="btn btn-soft btn-sm" href="#/pengaturan/app">${I('sliders')} Atur Tarif Pajak</a>` : ''}</div></div>`}
     <div class="card pad-0 mt"><div style="padding:14px 16px 0">${tabsBar('inv.tab', INV_TABS.map(t => ({ ...t, n: t.id ? by(t.id).length : S.invoice.length })), st.tab)}
       <div class="filters" style="padding-bottom:14px"><div class="input-ic">${I('search')}<input class="input tinted" placeholder="Cari No. Invoice, No. PO, No. Faktur, vendor" value="${E(st.q)}" data-in="inv.q"></div>
@@ -367,14 +404,14 @@ function invFiltered() {
 }
 function invTableHTML(list, { page = false, approve = false, hl = '' } = {}) {
   const pg = page ? UI.paginate(list, ps('invoice').page, 10) : { rows: list };
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>No. Invoice & Tanggal</th><th>Vendor Rekanan</th><th>Referensi PO & BAST</th><th>Jatuh Tempo</th><th class="num">Rincian Nilai<br>(DPP / Pajak / Netto)</th><th>Status BLUD</th><th>Aksi</th></tr></thead><tbody>
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>No. Invoice & Tanggal</th><th>Vendor Rekanan</th><th>Referensi SP & BAPB</th><th>Jatuh Tempo</th><th class="num">Rincian Nilai<br>(DPP / Pajak / Netto)</th><th>Status BLUD</th><th>Aksi</th></tr></thead><tbody>
   ${pg.rows.map(i => { const dt = UI.daysTo(i.jatuh_tempo), p = Store.po(i.po_id) || {}, b = Store.byId('bast', i.bast_id) || {}; const paid = i.status === 'Dibayar';
     return `<tr class="${hl === i.id ? 'row-sel' : ''}"><td><a class="mono small" href="#/invoice/${i.id}" style="font-weight:600;color:var(--ink)">${E(i.nomor_invoice || '(menunggu nomor)')}</a><div class="xs muted">Tgl: ${TGL(i.tanggal)}</div>${i.no_faktur ? `<div class="xs" style="color:var(--success-dark)">${I('check', '')} e-Faktur ${E(i.no_faktur)}</div>` : '<div class="xs" style="color:var(--danger)">e-Faktur belum ada</div>'}</td>
     <td>${vendorCell(Store.vendor(i.vendor_id))}</td><td><span class="tag-mini">${E(p.nomor_po || '-')}</span><br><span class="tag-mini" style="margin-top:4px">${E(b.nomor_bast || '-')}</span></td>
     <td class="small">${TGL(i.jatuh_tempo)}${paid ? `<div class="xs" style="color:var(--success-dark)">Dibayar ${TGL(i.tgl_bayar)}</div>` : i.status === 'Ditolak' ? '' : `<div class="pill-lbl ${dt < 0 ? 'pl-red' : dt <= 7 ? 'pl-amber' : 'pl-blue'}" style="display:inline-block;margin-top:4px">${dt < 0 ? 'Lewat ' + -dt + ' hari' : 'Sisa ' + dt + ' hari'}</div>`}</td>
     <td class="num"><div class="mono xs muted">DPP: ${UI.num(i.dpp)}</div><div class="mono xs muted">PPN: ${UI.num(i.ppn)} · PPh22: ${UI.num(i.pph)}</div><b>${RP(i.netto)}</b></td>
     <td>${CHIP(i.status)}${i.no_sp2d ? `<div class="mono xs muted" style="margin-top:4px">SP2D: ${E(i.no_sp2d)}</div>` : ''}${i.sumber_dana ? `<div class="xs muted">${E(i.sumber_dana)}</div>` : ''}</td>
-    <td class="row" style="gap:4px">${(approve || can('invApprove')) && i.status === 'Menunggu Verifikasi' ? `<button class="btn btn-success btn-xs" data-act="inv.approve" data-id="${i.id}">Setujui</button><button class="btn btn-outline-danger btn-xs" data-act="inv.reject" data-id="${i.id}">Tolak</button>` : ''}${can('invPay') && i.status === 'Disetujui' ? `<button class="btn btn-xs" data-act="inv.pay" data-id="${i.id}">${I('money')} Catat SP2D</button>` : ''}${can('invEdit') && i.status === 'Ditolak' ? `<button class="btn btn-soft btn-xs" data-act="inv.new" data-bast="${i.bast_id}">Ajukan Ulang</button>` : ''}<a class="icon-btn" href="#/invoice/${i.id}" title="Detail">${I('eye')}</a></td></tr>`; }).join('') || `<tr><td colspan="7">${UI.empty('Tidak ada invoice', 'money')}</td></tr>`}
+    <td class="row" style="gap:4px">${(approve || can('invApprove')) && i.status === 'Menunggu Verifikasi' ? `<button class="btn btn-success btn-xs" data-act="inv.approve" data-id="${i.id}">Setujui</button><button class="btn btn-outline-danger btn-xs" data-act="inv.reject" data-id="${i.id}">Tolak</button>` : ''}${can('invPay') && i.status === 'Disetujui' ? `<button class="btn btn-xs" data-act="inv.pay" data-id="${i.id}">${I('money')} Catat SP2D</button>` : ''}${can('invEdit') && i.status === 'Ditolak' ? `<button class="btn btn-soft btn-xs" data-act="inv.new" data-bast="${i.bast_id}">Ajukan Ulang</button>` : ''}<button class="icon-btn" data-act="doc.open" data-jenis="INVOICE" data-id="${i.id}" title="Cetak / PDF">${I('print')}</button><a class="icon-btn" href="#/invoice/${i.id}" title="Detail">${I('eye')}</a></td></tr>`; }).join('') || `<tr><td colspan="7">${UI.empty('Tidak ada invoice', 'money')}</td></tr>`}
   </tbody></table></div>${page ? UI.pager(pg, 'inv.page', 'tagihan') : ''}`;
 }
 function invBottom() {
@@ -384,7 +421,7 @@ function invBottom() {
   return `<div class="grid g-3-2 mt"><div class="card"><div class="card-head"><div class="ic">${I('refresh')}</div><div style="flex:1"><h3>Progres Pencairan Termin Belanja</h3><p>Realisasi pembayaran vs total tagihan per sumber dana TA ${YEAR}</p></div><span class="chip st-green nodot">${allT ? (allP / allT * 100).toFixed(1) : 0}% Realisasi</span></div>
     ${rows.map(r => `<div class="prog-row"><div class="top"><span>${E(r.d)}</span><span class="mono">${RP(r.paid)} / ${RP(r.tot)} (${r.pct.toFixed(0)}%)</span></div><div class="prog-bar"><i class="${r.pct >= 80 ? 'g' : r.pct < 50 ? 'o' : ''}" style="width:${r.pct}%"></i></div></div>`).join('') || UI.empty('Belum ada tagihan')}</div>
   <div class="card"><div class="card-head"><div class="ic" style="background:#d6f5df;color:var(--success)">${I('clipcheck')}</div><div style="flex:1"><h3>Kelengkapan Dokumen SPM</h3><p>Syarat mutlak sebelum penerbitan Surat Perintah Membayar</p></div><span class="chip st-blue nodot">5 Standar Baku</span></div>
-    ${[['BAST Fisik / Digital Sah', 'Ditandatangani PPTK & rekanan (otomatis dari modul BAST)'], ['Kuitansi Asli Bermaterai', 'Memuat rincian pekerjaan dan stempel rekanan'], ['e-Faktur Pajak Tervalidasi DJP', 'Nomor faktur tercatat pada invoice'], ['Surat Permohonan Pembayaran Vendor', 'Nomor rekening sesuai data rekanan di VMS'], ['Berita Acara Pembayaran (BAP) PPK', 'Persetujuan invoice oleh PPK di sistem']].map(([a, b], i) => `<div class="act-item row" style="align-items:flex-start"><span style="color:var(--success)">${I('check')}</span><div><b class="small">${i + 1}. ${a}</b><div class="xs muted">${b}</div></div></div>`).join('')}</div></div>`;
+    ${[['BAPB Sah', 'Ditandatangani PJ Ruangan / Penerima, mengetahui PPTK (otomatis dari modul BAPB)'], ['Kuitansi Asli Bermaterai', 'Memuat rincian pekerjaan dan stempel rekanan'], ['e-Faktur Pajak Tervalidasi DJP', 'Nomor faktur tercatat pada invoice'], ['Surat Permohonan Pembayaran Vendor', 'Nomor rekening sesuai data rekanan di VMS'], ['Berita Acara Pembayaran (BAP) PPK', 'Persetujuan invoice oleh PPK di sistem']].map(([a, b], i) => `<div class="act-item row" style="align-items:flex-start"><span style="color:var(--success)">${I('check')}</span><div><b class="small">${i + 1}. ${a}</b><div class="xs muted">${b}</div></div></div>`).join('')}</div></div>`;
 }
 const updInvTable = () => { const el = document.getElementById('inv-table'); if (el) el.innerHTML = invTableHTML(invFiltered(), { page: true }); };
 Act['inv.tab'] = el => { const s = ps('invoice'); s.tab = el.dataset.v; s.page = 1; App.refreshCurrent(); };
@@ -392,7 +429,7 @@ Act['inv.q'] = UI.debounce(el => { const s = ps('invoice'); s.q = el.value; s.pa
 Act['inv.dana'] = el => { const s = ps('invoice'); s.dana = el.value; s.page = 1; updInvTable(); };
 Act['inv.bulan'] = el => { const s = ps('invoice'); s.bulan = el.value; s.page = 1; updInvTable(); };
 Act['inv.page'] = el => { ps('invoice').page = +el.dataset.page; updInvTable(); };
-Act['inv.export'] = () => UI.exportExcel('Rekap_Pajak_SP2D_' + UI.iso(), { Invoice: invFiltered().map(i => ({ 'No Invoice': i.nomor_invoice, Tanggal: i.tanggal, Vendor: vName(i.vendor_id), NPWP: (Store.vendor(i.vendor_id) || {}).npwp, 'No Faktur': i.no_faktur, 'No PO': (Store.po(i.po_id) || {}).nomor_po, 'No BAST': (Store.byId('bast', i.bast_id) || {}).nomor_bast, DPP: i.dpp, PPN: i.ppn, 'PPh 22': i.pph, Netto: i.netto, 'Jatuh Tempo': i.jatuh_tempo, 'Sumber Dana': i.sumber_dana, Status: i.status, 'No SP2D': i.no_sp2d, 'Tgl Bayar': i.tgl_bayar })) });
+Act['inv.export'] = () => UI.exportExcel('Rekap_Pajak_SP2D_' + UI.iso(), { Invoice: invFiltered().map(i => ({ 'No Invoice': i.nomor_invoice, Tanggal: i.tanggal, Vendor: vName(i.vendor_id), NPWP: (Store.vendor(i.vendor_id) || {}).npwp, 'No Faktur': i.no_faktur, 'No SP': (Store.po(i.po_id) || {}).nomor_po, 'No BAPB': (Store.byId('bast', i.bast_id) || {}).nomor_bast, DPP: i.dpp, PPN: i.ppn, 'PPh 22': i.pph, Netto: i.netto, 'Jatuh Tempo': i.jatuh_tempo, 'Sumber Dana': i.sumber_dana, Status: i.status, 'No SP2D': i.no_sp2d, 'Tgl Bayar': i.tgl_bayar })) });
 Act['inv.new'] = el => invCreate(el.dataset.bast || '');
 function invCalc(bastId) {
   const d = Store.bastItems(bastId); const dpp = Math.round(d.reduce((a, x) => a + x.qty_diterima * x.harga, 0));
@@ -404,28 +441,45 @@ function invCreate(bastId, onClose) {
   const avail = S.bast.filter(b => b.status === 'Ditandatangani' && !billed.has(b.id));
   const jt = new Date(); jt.setDate(jt.getDate() + 14);
   const m = UI.modal({
-    title: 'Buat Invoice / Tagihan', sub: 'Invoice hanya dapat dibuat dari BAST yang sudah ditandatangani', size: 'lg', onClose,
-    body: `<div class="form-grid"><div class="field full"><label>BAST Referensi <span class="req">*</span></label><select class="select" id="iv-bast">${UI.opt(avail.map(b => ({ v: b.id, l: b.nomor_bast + ' — ' + vName(b.vendor_id) + ' (PO ' + ((Store.po(b.po_id) || {}).nomor_po || '') + ')' })), bastId, avail.length ? 'Pilih BAST…' : 'Tidak ada BAST yang siap ditagih')}</select></div>
+    title: 'Buat Invoice / Tagihan', sub: 'Invoice hanya dapat dibuat dari BAPB yang sudah disahkan', size: 'lg', onClose,
+    body: `<div class="form-grid"><div class="field full"><label>BAPB Referensi <span class="req">*</span></label><select class="select" id="iv-bast">${UI.opt(avail.map(b => ({ v: b.id, l: b.nomor_bast + ' — ' + vName(b.vendor_id) + ' (SP ' + ((Store.po(b.po_id) || {}).nomor_po || '') + ')' })), bastId, avail.length ? 'Pilih BAPB…' : 'Tidak ada BAPB yang siap ditagih')}</select></div>
       <div class="field"><label>No. e-Faktur Pajak</label><input class="input mono" id="iv-faktur" placeholder="010.000-26.00000000"></div><div class="field"><label>Tanggal Invoice</label><input class="input" type="date" id="iv-tgl" value="${UI.iso()}"></div>
       <div class="field"><label>Jatuh Tempo</label><input class="input" type="date" id="iv-jt" value="${UI.iso(jt)}"></div><div class="field"><label>Scan Kuitansi / Faktur (PDF)</label><input class="input" type="file" id="iv-file" accept="application/pdf,image/*" style="padding-top:8px"></div>
-      <div class="field full"><label>Catatan</label><input class="input" id="iv-cat"></div></div><div id="iv-calc" class="mt"></div>`,
+      <div class="field full"><label>Catatan</label><input class="input" id="iv-cat"></div></div><div id="iv-calc" class="mt"></div>
+      <div class="card flat mt"><div class="card-head" style="margin-bottom:8px"><span style="color:var(--primary)">${I('pen')}</span><h3>Tanda Tangan Penagih (Penyedia)</h3></div>
+        <div class="form-grid"><div class="field"><label>Nama penandatangan</label><input class="input" id="iv-tn"></div><div class="field"><label>Jabatan</label><input class="input" id="iv-tj" placeholder="Direktur"></div></div>
+        <div id="iv-ttd" class="mt-s"></div>
+        <label class="check mt-s"><input type="checkbox" id="iv-spes" checked> <span class="small">Simpan sebagai spesimen TTD rekanan</span></label>
+        <p class="xs muted mt-s">Pada cetakan invoice, kolom "Setuju dibayar" ditandatangani PPK setelah invoice disetujui.</p></div>`,
     foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn" id="iv-ok">${I('check')} Simpan & Ajukan ke PPK</button>`
   });
+  let picker = null, curV = null;
   const upd = () => {
-    const b = m.q('#iv-bast').value; if (!b) { m.q('#iv-calc').innerHTML = ''; return; }
-    const c = invCalc(b);
+    const b = Store.byId('bast', m.q('#iv-bast').value);
+    if (!b) { m.q('#iv-calc').innerHTML = ''; return; }
+    const c = invCalc(b.id);
     m.q('#iv-calc').innerHTML = `<div class="statline"><div><div class="k">DPP (barang diterima)</div><div class="v num">${RP(c.dpp)}</div></div><div><div class="k">PPN ${E(S.settings.PPN_RATE)}%</div><div class="v num">${RP(c.ppn)}</div></div><div><div class="k">PPh 22 ${E(S.settings.PPH22_RATE)}%</div><div class="v num">${RP(c.pph)}</div></div><div><div class="k">Netto ditransfer</div><div class="v num" style="color:var(--success-dark)">${RP(c.netto)}</div></div></div>`;
+    if (curV !== b.vendor_id) {
+      curV = b.vendor_id; const v = Store.vendor(b.vendor_id) || {};
+      m.q('#iv-tn').value = v.pic_nama || ''; m.q('#iv-tj').value = v.pic_jabatan || 'Direktur';
+      const basah = S.settings.TTD_MODE === 'basah';
+      picker = UI.ttdPicker(m.q('#iv-ttd'), { spesimen: v.ttd_file_id || '', modes: v.ttd_file_id ? ['spesimen', 'pad', 'upload', 'kosong'] : ['pad', 'upload', 'kosong'], value: basah ? 'kosong' : v.ttd_file_id ? 'spesimen' : 'kosong' });
+    }
   };
   m.q('#iv-bast').onchange = upd; upd();
+  if (!picker) picker = UI.ttdPicker(m.q('#iv-ttd'), { modes: ['pad', 'upload', 'kosong'], value: 'kosong' });
   m.q('#iv-ok').onclick = async () => {
-    const b = Store.byId('bast', m.q('#iv-bast').value); if (!b) { UI.toast('Pilih BAST referensi', 'err'); return; }
+    const b = Store.byId('bast', m.q('#iv-bast').value); if (!b) { UI.toast('Pilih BAPB referensi', 'err'); return; }
     let file_id = '';
     const f = m.q('#iv-file').files[0];
     if (f) { UI.busy(m.q('#iv-ok'), true); try { const c = await UI.compressImage(f); const r = await API.call('uploadFile', { po_id: b.po_id, vendor_id: b.vendor_id, base64: c.base64, name: 'Faktur_' + c.name, mime: c.mime }, { timeout: 120000 }); file_id = r.data[0].fileId; } catch (e) { UI.toast('Upload gagal: ' + e.message, 'err'); UI.busy(m.q('#iv-ok'), false); return; } }
-    const po = Store.po(b.po_id) || {};
-    const payload = { id: UI.uid(), bast_id: b.id, no_faktur: m.q('#iv-faktur').value.trim(), tanggal: m.q('#iv-tgl').value, jatuh_tempo: m.q('#iv-jt').value, catatan: m.q('#iv-cat').value.trim(), file_id };
-    const local = { ...payload, ...invCalc(b.id), nomor_invoice: '', po_id: b.po_id, vendor_id: b.vendor_id, sumber_dana: po.sumber_dana, status: 'Menunggu Verifikasi', created_at: new Date().toISOString() };
-    API.mutate({ label: 'Simpan invoice', apply: () => Store.upsert('invoice', local), rollback: () => Store.remove('invoice', payload.id), run: () => API.call('saveInvoice', payload), onSuccess: r => Store.upsert('invoice', r.data.invoice) });
+    const po = Store.po(b.po_id) || {}, t = picker.get();
+    const payload = { id: UI.uid(), bast_id: b.id, no_faktur: m.q('#iv-faktur').value.trim(), tanggal: m.q('#iv-tgl').value, jatuh_tempo: m.q('#iv-jt').value, catatan: m.q('#iv-cat').value.trim(), file_id,
+      ttd_nama: m.q('#iv-tn').value.trim(), ttd_jabatan: m.q('#iv-tj').value.trim(), ttd_mode: t.mode, ttd_base64: t.base64 || '', simpan_spesimen: m.q('#iv-spes').checked };
+    const v = Store.vendor(b.vendor_id) || {};
+    const local = { ...payload, ttd_base64: undefined, ...invCalc(b.id), ttd_file_id: t.mode === 'spesimen' ? v.ttd_file_id : '', nomor_invoice: '', po_id: b.po_id, vendor_id: b.vendor_id, sumber_dana: po.sumber_dana, status: 'Menunggu Verifikasi', created_at: new Date().toISOString() };
+    delete local.ttd_base64; delete local.ttd_mode; delete local.simpan_spesimen;
+    API.mutate({ label: 'Simpan invoice', apply: () => Store.upsert('invoice', local), rollback: () => Store.remove('invoice', payload.id), run: () => API.call('saveInvoice', payload), onSuccess: r => { Store.upsert('invoice', r.data.invoice); if (payload.simpan_spesimen && t.mode === 'gambar' && r.data.invoice.ttd_file_id && Store.vendor(b.vendor_id)) Store.upsert('vendors', { id: b.vendor_id, ttd_file_id: r.data.invoice.ttd_file_id }); } });
     m.close();
   };
 }
@@ -454,60 +508,19 @@ Act['inv.pay'] = el => {
 function invDrawer(id, onClose) {
   const i = Store.byId('invoice', id); if (!i) return;
   const v = Store.vendor(i.vendor_id) || {}, p = Store.po(i.po_id) || {}, b = Store.byId('bast', i.bast_id) || {};
-  const hasTpl = S.templates.some(t => t.jenis === 'INVOICE' && t.status === 'Aktif');
+  const tpl = Doc.activeTpl('INVOICE'), ok = ['Disetujui', 'Dibayar'].includes(i.status), basah = S.settings.TTD_MODE === 'basah';
   const m = UI.modal({
     drawer: true, onClose, title: `<span class="mono">${E(i.nomor_invoice || 'Invoice')}</span>`, sub: E(v.nama || ''),
     body: `<div class="row">${CHIP(i.status)}<span class="spacer"></span><b class="num" style="font-size:18px;color:var(--primary-deep)">${RP(i.netto)}</b></div>
-      <div class="grid g2 mt" style="gap:12px">${[['TANGGAL', TGL(i.tanggal, 1)], ['JATUH TEMPO', TGL(i.jatuh_tempo, 1)], ['NO. E-FAKTUR', i.no_faktur], ['SUMBER DANA', i.sumber_dana], ['REFERENSI PO', p.nomor_po], ['REFERENSI BAST', b.nomor_bast], ['NO. SP2D', i.no_sp2d], ['TANGGAL BAYAR', TGL(i.tgl_bayar)]].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small mono">${E(x || '-')}</div></div>`).join('')}</div>
+      <div class="doc-actions mt"><button class="btn" data-act="doc.open" data-jenis="INVOICE" data-id="${i.id}">${I('print')} Cetak Invoice / PDF</button></div>
+      <div class="grid g2 mt" style="gap:12px">${[['TANGGAL', TGL(i.tanggal, 1)], ['JATUH TEMPO', TGL(i.jatuh_tempo, 1)], ['NO. E-FAKTUR', i.no_faktur], ['SUMBER DANA', i.sumber_dana], ['REFERENSI SP', p.nomor_po], ['REFERENSI BAPB', b.nomor_bast], ['NO. SP2D', i.no_sp2d], ['TANGGAL BAYAR', TGL(i.tgl_bayar)]].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small mono">${E(x || '-')}</div></div>`).join('')}</div>
+      <h3 class="mt">Penandatangan</h3><div class="row wrap" style="gap:8px"><span class="chip nodot ${i.ttd_file_id && !basah ? 'st-green' : ''}">${I('pen')} Penyedia: ${E(i.ttd_nama || v.pic_nama || '-')}${i.ttd_jabatan ? ' (' + E(i.ttd_jabatan) + ')' : ''} · ${i.ttd_file_id && !basah ? 'TTD gambar' : 'TTD basah'}</span><span class="chip nodot ${ok && !basah ? 'st-green' : ''}">${I('pen')} Setuju dibayar PPK: ${ok ? (basah ? 'TTD basah' : 'TTD gambar bila ada spesimen') : 'menunggu persetujuan'}</span></div>
       <h3 class="mt">Rincian Perhitungan</h3><table class="tbl"><tbody><tr><td>DPP (nilai barang diterima)</td><td class="num">${RP(i.dpp)}</td></tr><tr><td>PPN ${E(S.settings.PPN_RATE)}%</td><td class="num">${RP(i.ppn)}</td></tr><tr><td>Bruto (DPP + PPN)</td><td class="num">${RP(i.dpp + i.ppn)}</td></tr><tr><td>Potongan PPN (wapu BLUD)</td><td class="num">− ${RP(i.ppn)}</td></tr><tr><td>Potongan PPh 22 ${E(S.settings.PPH22_RATE)}%</td><td class="num">− ${RP(i.pph)}</td></tr></tbody><tfoot><tr><td>Netto ditransfer</td><td class="num">${RP(i.netto)}</td></tr></tfoot></table>
       <h3 class="mt">Rekening Tujuan</h3><div class="act-item small mono">${E(v.bank || '-')} · ${E(v.no_rekening || '-')}<br>a.n. ${E(v.nama_rekening || '-')}</div>
       ${i.catatan ? `<p class="small mt"><b>Catatan:</b> ${E(i.catatan)}</p>` : ''}
       ${i.file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(i.file_id)}">${I('pdf', 'fi')}<span class="small" style="flex:1">Scan faktur / kuitansi</span>${I('ext')}</a>` : ''}
-      ${i.doc_file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(i.doc_file_id)}">${I('pdf', 'fi')}<span class="small" style="flex:1">Kuitansi resmi (PDF)</span>${I('ext')}</a>` : ''}`,
-    foot: `${can('genDoc') && hasTpl ? `<button class="btn btn-outline" data-act="doc.gen" data-jenis="INVOICE" data-id="${i.id}">${I('doc')} Generate Kuitansi</button>` : ''}<span class="spacer"></span>${can('invApprove') && i.status === 'Menunggu Verifikasi' ? `<button class="btn btn-outline-danger" data-act="inv.reject" data-id="${i.id}">Tolak</button><button class="btn btn-success" data-act="inv.approve" data-id="${i.id}">Setujui</button>` : ''}${can('invPay') && i.status === 'Disetujui' ? `<button class="btn" data-act="inv.pay" data-id="${i.id}">${I('money')} Catat SP2D</button>` : ''}`
+      ${i.doc_file_id ? `<a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(i.doc_file_id)}">${I('pdf', 'fi')}<span class="small" style="flex:1">PDF Invoice (Google Drive)</span>${I('ext')}</a>` : ''}`,
+    foot: `${can('genDoc') && tpl ? `<button class="btn btn-ghost btn-sm" data-act="doc.gen" data-jenis="INVOICE" data-id="${i.id}">${I('doc')} PDF → Drive</button>` : ''}<span class="spacer"></span>${can('invApprove') && i.status === 'Menunggu Verifikasi' ? `<button class="btn btn-outline-danger" data-act="inv.reject" data-id="${i.id}">Tolak</button><button class="btn btn-success" data-act="inv.approve" data-id="${i.id}">Setujui</button>` : ''}${can('invPay') && i.status === 'Disetujui' ? `<button class="btn" data-act="inv.pay" data-id="${i.id}">${I('money')} Catat SP2D</button>` : ''}`
   });
   m.el.addEventListener('click', e => { if (e.target.closest('[data-act^="inv."]')) m.close(); });
 }
-
-/* =====================================================================
-   KONTRAK
-   ===================================================================== */
-Pages.kontrak = {
-  title: 'Kontrak', deps: ['kontrak', 'vendors', 'po'],
-  render(el) {
-    const list = S.kontrak.slice().sort((a, b) => (b.created_at || '') > (a.created_at || '') ? 1 : -1);
-    el.innerHTML = pageHead({ eyebrow: `<span class="tag">Surat Perjanjian / SPK</span> • TA ${YEAR}`, title: 'Kontrak Pengadaan', sub: 'Surat perjanjian kerja untuk paket bernilai besar, dengan klausul jaminan, sanksi keterlambatan, dan persetujuan PPK.', actions: can('kontrakEdit') ? `<button class="btn" data-act="k.edit">${I('plus')} Buat Kontrak</button>` : '' }) +
-      `<div class="grid g4 mb">${kpi({ lbl: 'Kontrak Aktif', val: S.kontrak.filter(k => k.status === 'Aktif').length, ico: 'contract', ic: 'g' })}${kpi({ lbl: 'Menunggu Approval', val: S.kontrak.filter(k => k.status === 'Menunggu Approval').length, ico: 'hourglass', ic: 'a' })}${kpi({ lbl: 'Nilai Kontrak Aktif', val: RP(S.kontrak.filter(k => k.status === 'Aktif').reduce((a, k) => a + k.nilai, 0)), ico: 'wallet', accent: true })}${kpi({ lbl: 'Berakhir ≤ 30 Hari', val: S.kontrak.filter(k => k.status === 'Aktif' && UI.daysTo(k.tgl_selesai) <= 30).length, ico: 'clock', ic: 'r' })}</div>
-      <div class="card pad-0">${kontrakTable(list)}</div>`;
-  }
-};
-function kontrakTable(list) {
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nomor</th><th>Judul Pekerjaan</th><th>Vendor</th><th>Periode</th><th class="num">Nilai</th><th>Status</th><th></th></tr></thead><tbody>
-  ${list.map(k => `<tr><td class="mono small">${E(k.nomor || '(menunggu nomor)')}</td><td>${E(k.judul)}<div class="sub">${E((Store.po(k.po_id) || {}).nomor_po || '')}</div></td><td>${E(vName(k.vendor_id))}</td><td class="small">${TGL(k.tgl_mulai)} – ${TGL(k.tgl_selesai)}</td><td class="num">${RP(k.nilai)}</td><td>${CHIP(k.status)}</td>
-    <td class="row" style="gap:4px">${can('kontrakApprove') && k.status === 'Menunggu Approval' ? `<button class="btn btn-success btn-xs" data-act="k.approve" data-id="${k.id}">Sahkan</button><button class="btn btn-outline-danger btn-xs" data-act="k.reject" data-id="${k.id}">Tolak</button>` : ''}${can('kontrakEdit') && ['Draft', 'Ditolak'].includes(k.status) ? `<button class="btn btn-soft btn-xs" data-act="k.edit" data-id="${k.id}">Edit</button>` : ''}${can('genDoc') && k.status === 'Aktif' && S.templates.some(t => t.jenis === 'KONTRAK' && t.status === 'Aktif') ? `<button class="icon-btn" data-act="doc.gen" data-jenis="KONTRAK" data-id="${k.id}" title="Generate dokumen">${I('doc')}</button>` : ''}${k.doc_file_id ? `<a class="icon-btn" target="_blank" rel="noopener" href="${UI.driveUrl(k.doc_file_id)}">${I('pdf')}</a>` : ''}</td></tr>`).join('') || `<tr><td colspan="7">${UI.empty('Belum ada kontrak', 'contract')}</td></tr>`}
-  </tbody></table></div>`;
-}
-Act['k.edit'] = el => {
-  const k = el.dataset.id ? Store.byId('kontrak', el.dataset.id) : { id: UI.uid() };
-  const m = UI.modal({ title: el.dataset.id ? 'Edit Kontrak' : 'Buat Kontrak', size: 'lg', body: `<form class="form-grid" id="kf"><div class="field full"><label>Judul Pekerjaan <span class="req">*</span></label><input class="input" name="judul" value="${E(k.judul || '')}"></div>
-    <div class="field"><label>Vendor <span class="req">*</span></label><select class="select" name="vendor_id">${UI.opt(S.vendors.filter(v => v.status !== 'Nonaktif').map(v => ({ v: v.id, l: v.nama })), k.vendor_id, 'Pilih vendor')}</select></div><div class="field"><label>Referensi PO</label><select class="select" name="po_id">${UI.opt(S.po.filter(p => ACTIVE_PO(p)).map(p => ({ v: p.id, l: p.nomor_po + ' — ' + vName(p.vendor_id) })), k.po_id, '(opsional)')}</select></div>
-    <div class="field"><label>Nilai Kontrak (Rp) <span class="req">*</span></label><input class="input mono" name="nilai" inputmode="numeric" value="${k.nilai || ''}"></div><div></div><div class="field"><label>Tanggal Mulai</label><input class="input" type="date" name="tgl_mulai" value="${E(k.tgl_mulai || UI.iso())}"></div><div class="field"><label>Tanggal Selesai</label><input class="input" type="date" name="tgl_selesai" value="${E(k.tgl_selesai || '')}"></div>
-    <div class="field full"><label>Catatan / Klausul Khusus</label><textarea class="textarea" name="catatan">${E(k.catatan || '')}</textarea></div></form>`,
-    foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn btn-outline" data-sub="0">Simpan Draft</button><button class="btn" data-sub="1">Ajukan ke PPK</button>` });
-  m.qa('[data-sub]').forEach(b => b.onclick = () => {
-    const x = UI.formData(m.q('#kf')); x.nilai = Number(String(x.nilai).replace(/\D/g, '')) || 0;
-    if (!x.judul || !x.vendor_id || !x.nilai) { UI.toast('Judul, vendor, dan nilai wajib diisi', 'err'); return; }
-    const payload = { ...k, ...x, submit: b.dataset.sub === '1' };
-    const existed = Store.byId('kontrak', k.id);
-    API.mutate({ label: 'Simpan kontrak', apply: () => Store.upsert('kontrak', { ...k, ...x, status: payload.submit ? 'Menunggu Approval' : 'Draft', created_at: k.created_at || new Date().toISOString() }), rollback: o => existed ? Store.upsert('kontrak', o) : Store.remove('kontrak', k.id), run: () => API.call('saveKontrak', payload), onSuccess: r => Store.upsert('kontrak', r.data.kontrak) });
-    m.close();
-  });
-};
-async function decideK(id, keputusan) {
-  const k = Store.byId('kontrak', id); let catatan = '';
-  if (keputusan === 'tolak') { catatan = await UI.confirm('Tolak kontrak?', E(k.judul), { danger: true, ok: 'Tolak', input: { label: 'Alasan', required: true, textarea: true } }); if (!catatan) return; }
-  else if (!await UI.confirm('Sahkan kontrak?', `<b>${E(k.judul)}</b> — ${RP(k.nilai)}`, { ok: 'Sahkan' })) return;
-  API.mutate({ label: 'Keputusan kontrak', apply: () => Store.upsert('kontrak', { id, status: keputusan === 'setuju' ? 'Aktif' : 'Ditolak' }), rollback: o => Store.upsert('kontrak', o), run: () => API.call('approveKontrak', { id, keputusan, catatan }), onSuccess: r => { Store.upsert('kontrak', r.data.kontrak); if (keputusan === 'setuju') genDocument('KONTRAK', id, { silent: true, manual: {} }); } });
-}
-Act['k.approve'] = el => decideK(el.dataset.id, 'setuju');
-Act['k.reject'] = el => decideK(el.dataset.id, 'tolak');

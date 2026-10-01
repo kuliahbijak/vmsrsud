@@ -46,7 +46,10 @@ const UI = (() => {
     box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>', tag: '<path d="M3 12V3h9l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/>', menu: '<path d="M4 6h16M4 12h16M4 18h16"/>', copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
     key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/>', share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
-    cross: '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>'
+    cross: '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>',
+    wa: '<path d="M4 20l1.3-3.9A8 8 0 1 1 8 19z"/><path d="M9 9.5c.3 2 2.5 4.2 4.5 4.5l1.2-1.2 1.8.8-.4 1.6c-3.6.4-7.4-3.4-7-7l1.6-.4.8 1.8z"/>',
+    contacts: '<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M7 17c1-2 2.8-3 5-3s4 1 5 3M2 7h2M2 12h2M2 17h2"/>',
+    send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>', pen: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'
   };
   const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ''}</svg>`;
   const logo = (c = '#fff') => `<svg viewBox="0 0 32 32" width="30" height="30"><path d="M12 3h8v9h9v8h-9v9h-8v-9H3v-8h9z" fill="${c}"/><path d="M26 2l1.2 2.8L30 6l-2.8 1.2L26 10l-1.2-2.8L22 6l2.8-1.2z" fill="#94f4ad"/></svg>`;
@@ -76,9 +79,11 @@ const UI = (() => {
   const STATUS = {
     'Draft': 'st-gray', 'Menunggu Approval': 'st-red', 'Disetujui PPK': 'st-green', 'Ditolak': 'st-red', 'BAST Parsial': 'st-amber', 'BAST Terbit': 'st-teal', 'Selesai': 'st-solid-green',
     'Ditandatangani': 'st-green', 'Menunggu Verifikasi': 'st-amber', 'Disetujui': 'st-green', 'Dibayar': 'st-solid-green',
-    'Aktif Terverifikasi': 'st-green', 'Dokumen Expired': 'st-red', 'Nonaktif': 'st-gray', 'Aktif': 'st-green', 'Urgent': 'st-red', 'Normal': 'st-gray'
+    'Aktif Terverifikasi': 'st-green', 'Dokumen Expired': 'st-red', 'Nonaktif': 'st-gray', 'Aktif': 'st-green', 'Urgent': 'st-red', 'Normal': 'st-gray',
+    'Antri': 'st-amber', 'Terkirim': 'st-green', 'Gagal': 'st-red', 'Batal': 'st-gray', 'Berjalan': 'st-blue', 'Dihentikan': 'st-gray'
   };
-  const LABEL = { 'Selesai': 'Selesai / Dibayar', 'Menunggu Verifikasi': 'Menunggu Verifikasi' };
+  // v1.1: BAST → BAPB (Berita Acara Penerimaan Barang). Nilai status di database tidak diubah.
+  const LABEL = { 'Selesai': 'Selesai / Dibayar', 'Menunggu Verifikasi': 'Menunggu Verifikasi', 'BAST Parsial': 'Diterima Sebagian', 'BAST Terbit': 'BAPB Terbit', 'Ditandatangani': 'Disahkan' };
   const chip = (s, extra = '') => `<span class="chip ${STATUS[s] || 'st-blue'} ${extra}">${esc(LABEL[s] || s || '-')}</span>`;
 
   // ---------- Toast ----------
@@ -106,7 +111,7 @@ const UI = (() => {
     document.body.appendChild(ov);
     const api = { el: ov, close, q: s => ov.querySelector(s), qa: s => [...ov.querySelectorAll(s)] };
     if (onMount) onMount(api);
-    const f = ov.querySelector('input:not([type=hidden]),select,textarea'); if (f && !drawer) setTimeout(() => f.focus(), 30);
+    const f = ov.querySelector('input:not([type=hidden]),select,textarea'); if (f && !drawer) setTimeout(() => { if (!ov.contains(document.activeElement)) f.focus(); }, 30);
     return api;
   }
   function confirm(title, msg, { ok = 'Ya, lanjutkan', danger = false, input = null } = {}) {
@@ -247,5 +252,77 @@ const UI = (() => {
   const opt = (list, sel, ph) => (ph ? `<option value="">${esc(ph)}</option>` : '') + list.map(o => { const v = typeof o === 'object' ? o.v : o, l = typeof o === 'object' ? o.l : o; return `<option value="${esc(v)}" ${String(v) === String(sel) ? 'selected' : ''}>${esc(l)}</option>`; }).join('');
   function busy(btn, on) { if (!btn) return; btn.classList.toggle('busy', !!on); btn.disabled = !!on; }
 
-  return { icon, logo, esc, rp, num, tgl, tglJam, iso, toDate, daysTo, ago, initials, uid, debounce, avClass, chip, toast, modal, confirm, paginate, pager, empty, barChart, donut, readB64, compressImage, fsize, driveUrl, exportExcel, toCSV, downloadText, parseCSV, formData, opt, busy, BLN, BULAN };
+  // ---------- Tanda tangan: kanvas & unggah PNG ----------
+  /** Kanvas tanda tangan (latar transparan). Mengembalikan { isEmpty(), toDataURL(), clear() } */
+  function sigPad(canvas, onChange) {
+    const ctx = canvas.getContext('2d'); let drawn = false, draw = false, last = null;
+    const fit = () => { const r = canvas.getBoundingClientRect(); if (!r.width) return; const img = drawn ? canvas.toDataURL() : null; canvas.width = r.width * devicePixelRatio; canvas.height = r.height * devicePixelRatio; ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0b1f4d'; if (img) { const i = new Image(); i.onload = () => ctx.drawImage(i, 0, 0, r.width, r.height); i.src = img; } };
+    setTimeout(fit, 30);
+    const pos = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    canvas.onpointerdown = e => { draw = true; last = pos(e); canvas.setPointerCapture(e.pointerId); };
+    canvas.onpointermove = e => { if (!draw) return; const p = pos(e); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; if (!drawn) { drawn = true; onChange && onChange(true); } };
+    canvas.onpointerup = canvas.onpointercancel = () => { draw = false; };
+    return { isEmpty: () => !drawn, toDataURL: () => trimCanvas(canvas), clear: () => { ctx.clearRect(0, 0, canvas.width, canvas.height); drawn = false; onChange && onChange(false); }, fit };
+  }
+  /** Potong area kosong kanvas → PNG ringkas */
+  function trimCanvas(c) {
+    const ctx = c.getContext('2d'), w = c.width, h = c.height, d = ctx.getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = 0, y1 = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 <= x0 || y1 <= y0) return c.toDataURL('image/png');
+    const p = 8, o = document.createElement('canvas'); o.width = x1 - x0 + p * 2; o.height = y1 - y0 + p * 2;
+    o.getContext('2d').drawImage(c, x0 - p, y0 - p, o.width, o.height, 0, 0, o.width, o.height);
+    return o.toDataURL('image/png');
+  }
+  /** Gambar TTD unggahan → latar putih dibuat transparan, maks 700px, PNG */
+  async function ttdFromFile(file) {
+    const src = await readB64(file);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+    const s = Math.min(1, 700 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+    const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, c.width, c.height);
+    const id = ctx.getImageData(0, 0, c.width, c.height), d = id.data;
+    for (let i = 0; i < d.length; i += 4) { const m = Math.min(d[i], d[i + 1], d[i + 2]); if (m > 225) d[i + 3] = 0; else if (m > 190) d[i + 3] = Math.round(d[i + 3] * (225 - m) / 35); }
+    ctx.putImageData(id, 0, 0);
+    return trimCanvas(c);
+  }
+  /**
+   * Pemilih TTD: spesimen tersimpan · gambar di layar · unggah PNG · kosong (TTD basah).
+   * el = wadah; opt = { spesimen: fileId, modes: [...], value } → { get(): {mode:'spesimen'|'gambar'|'kosong', base64} }
+   */
+  function ttdPicker(el, opt = {}) {
+    const modes = opt.modes || ['spesimen', 'pad', 'upload', 'kosong'];
+    const L = { spesimen: 'TTD tersimpan', pad: 'Gambar di layar', upload: 'Unggah PNG', kosong: 'Kosongkan (TTD basah)' };
+    const st = { mode: opt.value || (opt.spesimen && modes.includes('spesimen') ? 'spesimen' : modes.includes('pad') ? 'pad' : modes[0]), upload: '', spesimen: opt.spesimen || '' };
+    let pad = null;
+    function render() {
+      el.innerHTML = `<div class="seg ttd-seg">${modes.map(m => `<button type="button" class="${st.mode === m ? 'on' : ''}" data-m="${m}">${L[m]}</button>`).join('')}</div><div class="ttd-panel mt-s"></div>`;
+      const pnl = el.querySelector('.ttd-panel');
+      if (st.mode === 'spesimen') {
+        pnl.innerHTML = st.spesimen ? `<div class="ttd-box"><span class="xs muted">Memuat spesimen…</span></div>` : `<div class="ttd-box"><span class="small muted">Belum ada spesimen TTD tersimpan. Pilih "Gambar di layar" atau "Unggah PNG".</span></div>`;
+        if (st.spesimen && typeof DocImg !== 'undefined') DocImg.load([st.spesimen]).then(m => { const b = pnl.querySelector('.ttd-box'); if (b) b.innerHTML = m[st.spesimen] ? `<img src="${m[st.spesimen]}" alt="TTD">` : '<span class="small muted">Spesimen tidak dapat dimuat</span>'; });
+      } else if (st.mode === 'pad') {
+        pnl.innerHTML = `<div class="sigpad"><span class="lbl">GORESKAN TTD (MOUSE / JARI / STYLUS)</span><canvas></canvas><div class="row mono xs muted" style="padding:6px 12px;justify-content:space-between"><span class="st">● Siap</span><button type="button" class="btn btn-ghost btn-xs" data-clr>Ulangi</button></div></div>`;
+        pad = sigPad(pnl.querySelector('canvas'), d => { pnl.querySelector('.st').textContent = d ? '● Tertanda' : '● Siap'; });
+        pnl.querySelector('[data-clr]').onclick = () => pad.clear();
+      } else if (st.mode === 'upload') {
+        pnl.innerHTML = `<label class="drop" style="display:block"><input type="file" accept="image/png,image/jpeg,image/webp" hidden>${icon('upload')}<div class="small">Pilih foto/scan TTD (PNG/JPG). Latar putih otomatis dibuat transparan.</div></label><div class="ttd-box mt-s ${st.upload ? '' : 'hidden'}">${st.upload ? `<img src="${st.upload}" alt="">` : ''}</div>`;
+        pnl.querySelector('input').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { st.upload = await ttdFromFile(f); render(); } catch (x) { toast('Gambar tidak dapat dibaca', 'err'); } };
+      } else pnl.innerHTML = `<div class="info-box">${icon('print')}<span>Tempat tanda tangan dikosongkan pada dokumen — ditandatangani <b>basah</b> setelah dicetak.</span></div>`;
+      el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; render(); });
+    }
+    render();
+    return {
+      get() {
+        if (st.mode === 'spesimen') return { mode: st.spesimen ? 'spesimen' : 'kosong' };
+        if (st.mode === 'pad') return pad && !pad.isEmpty() ? { mode: 'gambar', base64: pad.toDataURL() } : { mode: 'kosong', empty: true };
+        if (st.mode === 'upload') return st.upload ? { mode: 'gambar', base64: st.upload } : { mode: 'kosong', empty: true };
+        return { mode: 'kosong' };
+      },
+      setSpesimen(id) { st.spesimen = id || ''; if (id && modes.includes('spesimen')) st.mode = 'spesimen'; render(); },
+      get mode() { return st.mode; }
+    };
+  }
+
+  return { sigPad, ttdPicker, ttdFromFile, trimCanvas, icon, logo, esc, rp, num, tgl, tglJam, iso, toDate, daysTo, ago, initials, uid, debounce, avClass, chip, toast, modal, confirm, paginate, pager, empty, barChart, donut, readB64, compressImage, fsize, driveUrl, exportExcel, toCSV, downloadText, parseCSV, formData, opt, busy, BLN, BULAN };
 })();

@@ -5,7 +5,7 @@
              (Deploy → New deployment → Web app → Execute as: Me, Access: Anyone)
    ============================================================ */
 window.VMS_CONFIG = {
-  GAS_URL: 'https://script.google.com/macros/s/AKfycbwO4AEq7uJrlaLY5OfuJ3qJu7LzlY0qscshwFy9B0L5BSvaLelCF2S0bpJaAQ46ZCPl/exec',
+  GAS_URL: 'https://script.google.com/macros/s/AKfycbxBBCZOvWXLlMsiunQqBHT1z3No1BilOKrrlenEEqnFgz4dP_JsYoTyfspDfjznhPWr/exec',
   APP_NAME: 'VMS Procurement',
   RS_SINGKAT: 'RSUD HAMBA',
   POLL_MS: 45000,          // cek versi data server tiap 45 detik (ringan)

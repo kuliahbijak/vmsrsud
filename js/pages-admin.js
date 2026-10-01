@@ -4,128 +4,164 @@
    ========================================================================== */
 
 /* =====================================================================
-   KELOLA TEMPLATE DOKUMEN
+   KELOLA TEMPLATE DOKUMEN (gas-doc-engine)
+   - Format bawaan: SP (PO), BAPB, BAST Hasil Pekerjaan, Invoice — langsung
+     bisa dicetak/PDF dari browser tanpa setup apa pun.
+   - "Pasang Template Bawaan" menyalin format bawaan menjadi Google Docs di
+     Drive (folder Template_Docs) → desain bisa diubah bebas di Google Docs,
+     penanda {{KUNCI}} tetap terisi otomatis saat generate PDF.
+   - Template kustom: daftarkan Google Docs sendiri berisi {{KUNCI}} / [KUNCI].
    ===================================================================== */
-const JENIS_DOK = [{ v: 'PO', l: 'Purchase Order (PO)' }, { v: 'BAST', l: 'Berita Acara Serah Terima (BAST)' }, { v: 'INVOICE', l: 'Kuitansi & Invoice' }, { v: 'KONTRAK', l: 'Surat Perjanjian / Kontrak' }, { v: 'CUSTOM', l: 'Dokumen Custom Lainnya' }];
+const JENIS_DOK = [{ v: 'PO', l: 'Surat Pesanan (SP / PO)' }, { v: 'BAPB', l: 'Berita Acara Penerimaan Barang (BAPB)' }, { v: 'BASTP', l: 'BAST Hasil Pekerjaan' }, { v: 'INVOICE', l: 'Invoice / Tagihan' }, { v: 'CUSTOM', l: 'Dokumen Custom Lainnya' }];
+const JENIS_CETAK = ['PO', 'BAPB', 'BASTP', 'INVOICE'];
+const tok = p => '{{' + p + '}}';
 Pages.template = {
-  title: 'Kelola Template', roles: ['ADMIN'], deps: ['templates'],
+  title: 'Kelola Template', roles: ['ADMIN'], deps: ['templates', 'po', 'bast', 'invoice'],
   render(el) {
-    const st = ps('template', { draft: null });
+    const st = ps('template', { draft: null, guide: false });
     const aktif = S.templates.filter(t => t.status === 'Aktif');
-    const fields = S.templates.reduce((a, t) => a + (t.placeholders || []).length, 0);
     const last = S.templates.map(t => t.last_scan).sort().pop();
     el.innerHTML = pageHead({
-      eyebrow: `● Document Automation Engine • ${E(S.settings.RS_NAMA || '')} v1.0`, title: 'Kelola Template Dokumen (Google Docs)',
-      sub: 'Integrasi otomatis Google Docs: scan placeholder <span class="code-pill">[NAMA_PLACEHOLDER]</span> dan mapping formulir dinamis tanpa koding.',
-      actions: `<button class="btn" data-act="tpl.new">${I('plus')} Daftarkan Template Baru</button>`
-    }) + `<div class="grid g3">
-      ${kpi({ lbl: 'Template Aktif', val: aktif.length + ' Dokumen', ico: 'shield', ic: 'g', foot: E(aktif.map(t => t.jenis).join(', ') || 'Belum ada'), fc: 'muted' })}
-      ${kpi({ lbl: 'Field Placeholder Terdeteksi', val: fields + ' Field Otomatis', ico: 'braces', foot: `${I('swap')} ${S.templates.length} Schema terdaftar`, fc: 'muted' })}
-      ${kpi({ lbl: 'Status Sinkronisasi Google Drive', val: '<span style="color:var(--success-dark)">Terhubung</span>', ico: 'refresh', ic: 'g', foot: last ? 'Scan terakhir ' + UI.ago(last) : 'Belum ada scan', fc: 'muted' })}
-    </div>
+      eyebrow: `● Document Engine • ${E(S.settings.RS_NAMA || '')} v1.1`, title: 'Kelola Template Dokumen',
+      sub: 'Format bawaan siap cetak/PDF. Desain dapat diubah di Google Docs memakai penanda <span class="code-pill">{{NAMA_KUNCI}}</span>, baris barang <span class="code-pill">{{#ITEM}}</span>, dan gambar TTD <span class="code-pill">{{TTD_PPK}}</span>.',
+      actions: `<button class="btn btn-outline" data-act="tpl.guide">${I('braces')} Daftar Penanda</button><button class="btn btn-success" data-act="tpl.install">${I('down')} Pasang Template Bawaan</button><button class="btn" data-act="tpl.new">${I('plus')} Template Kustom</button>`
+    }) + `<div class="grid g4 tpl-def">${JENIS_CETAK.map(j => { const t = aktif.find(x => DC.normJenis(x.jenis) === j); const custom = t && String(t.is_default) !== '1';
+        return `<div class="card"><div class="card-head"><div class="ic">${I('doc')}</div><div style="flex:1;min-width:0"><h3>${E(DOC_LABEL[j] || j)}</h3><p class="ellipsis">${t ? (custom ? 'Desain kustom: ' + E(t.nama) : 'Template bawaan (Google Docs)') : 'Format bawaan (cetak browser)'}</p></div></div>
+          <div class="row wrap" style="gap:6px">${t ? `<span class="chip ${custom ? 'st-blue' : 'st-green'} nodot">${custom ? 'Kustom aktif' : 'Docs aktif'}</span>` : '<span class="chip st-gray nodot">Bawaan</span>'}<span class="chip nodot">${S.settings.TTD_MODE === 'basah' ? 'TTD basah' : 'TTD gambar'}</span></div>
+          <div class="row wrap mt" style="gap:6px"><button class="btn btn-outline btn-sm" data-act="tpl.sample" data-j="${j}">${I('eye')} Pratinjau</button>${t ? `<a class="btn btn-ghost btn-sm" href="${E(t.doc_url)}" target="_blank" rel="noopener">${I('ext')} Edit desain</a>` : ''}</div></div>`; }).join('')}</div>
+    <div class="info-box mt">${I('info')}<span><b>Alur kustomisasi:</b> klik <b>Pasang Template Bawaan</b> → buka "Edit desain" (Google Docs) → ubah tata letak/teks sesuka hati, pertahankan penanda {{…}} → kembali ke sini, <b>Scan Ulang</b> → simpan. Tombol "PDF dari Template" pada dialog cetak akan memakai desain tersebut. ${last ? 'Scan terakhir ' + UI.ago(last) + '.' : ''}</span></div>
+    ${st.guide ? `<div class="card mt" id="tpl-guide">${tplGuide()}</div>` : ''}
     <div class="card mt" id="tpl-panel">${tplPanel(st.draft)}</div>
-    <div class="row mt" style="margin-top:28px"><h2 style="flex:1">Daftar Template Resmi Terdaftar <span class="chip st-blue nodot">${S.templates.length} Live Assets</span></h2><span class="small muted">Scan ulang untuk mendeteksi perubahan placeholder</span></div>
-    <div class="grid g2 mt-s">${S.templates.map(t => { const um = (t.placeholders || []).filter(p => !(t.mapping || {})[p]).length; return `<div class="card"><div class="card-head"><div class="ic">${I('doc')}</div><div style="flex:1"><h3>${E(t.nama)}</h3><div class="mono xs muted">ID: ${E(String(t.doc_id).slice(0, 18))}… • <span style="color:var(--success-dark)">${(t.placeholders || []).length} Placeholders</span> • ${E(t.jenis)}</div></div>${CHIP(t.status === 'Aktif' ? 'Aktif' : t.status === 'Draft' ? 'Menunggu Verifikasi' : 'Nonaktif')}</div>
-      <div class="row wrap mono xs">${(t.placeholders || []).slice(0, 8).map(p => `<span class="tag-mini">[${E(p)}]</span>`).join('')}${(t.placeholders || []).length > 8 ? `<span class="muted">+${t.placeholders.length - 8}</span>` : ''}</div>
-      <div class="row mono xs muted mt-s">${I('clock')} Scanned: ${UI.tglJam(t.last_scan)}${um ? ` · <span style="color:var(--warn)">${um} field belum di-map</span>` : ''}</div>
-      <div class="row mt"><a class="btn btn-ghost btn-sm" href="${E(t.doc_url)}" target="_blank" rel="noopener">${I('ext')} Buka di Google Docs</a><span class="spacer"></span><button class="btn btn-outline btn-sm" data-act="tpl.rescan" data-id="${t.id}">${I('refresh')} Scan Ulang</button><button class="btn btn-sm ${um ? 'btn-danger' : ''}" data-act="tpl.edit" data-id="${t.id}">${I('sliders')} ${um ? 'Selesaikan Mapping' : 'Edit Mapping'}</button><button class="icon-btn" data-act="tpl.del" data-id="${t.id}">${I('trash')}</button></div></div>`; }).join('') || `<div class="card span-all">${UI.empty('Belum ada template. Siapkan Google Docs berisi placeholder seperti [NOMOR_PO], [NAMA_VENDOR], [TABEL_BARANG] lalu daftarkan di atas.', 'doc')}</div>`}</div>`;
+    <div class="row mt" style="margin-top:28px"><h2 style="flex:1">Template Terdaftar <span class="chip st-blue nodot">${S.templates.length}</span></h2><span class="small muted hide-sm">Scan ulang setelah mengubah Google Docs</span></div>
+    <div class="grid g2 mt-s">${S.templates.map(t => { const um = (t.placeholders || []).filter(p => !(t.mapping || {})[p]).length; return `<div class="card"><div class="card-head"><div class="ic">${I('doc')}</div><div style="flex:1;min-width:0"><h3>${E(t.nama)}${String(t.is_default) === '1' ? ' <span class="chip st-gray nodot">bawaan</span>' : ''}</h3><div class="mono xs muted ellipsis">${E(DOC_LABEL[DC.normJenis(t.jenis)] || t.jenis)} • <span style="color:var(--success-dark)">${(t.placeholders || []).length} penanda</span></div></div>${CHIP(t.status === 'Aktif' ? 'Aktif' : t.status === 'Draft' ? 'Menunggu Verifikasi' : 'Nonaktif')}</div>
+      <div class="row wrap mono xs">${(t.placeholders || []).slice(0, 8).map(p => `<span class="tag-mini">${E(tok(p))}</span>`).join('')}${(t.placeholders || []).length > 8 ? `<span class="muted">+${t.placeholders.length - 8}</span>` : ''}</div>
+      <div class="row mono xs muted mt-s">${I('clock')} ${UI.tglJam(t.last_scan)}${um ? ` · <span style="color:var(--warn)">${um} belum di-map</span>` : ''}</div>
+      <div class="row wrap mt" style="gap:6px"><a class="btn btn-ghost btn-sm" href="${E(t.doc_url)}" target="_blank" rel="noopener">${I('ext')} Google Docs</a><span class="spacer"></span><button class="btn btn-outline btn-sm" data-act="tpl.rescan" data-id="${t.id}">${I('refresh')} Scan Ulang</button><button class="btn btn-sm ${um ? 'btn-danger' : ''}" data-act="tpl.edit" data-id="${t.id}">${I('sliders')} Mapping</button>${t.status !== 'Aktif' ? `<button class="btn btn-soft btn-sm" data-act="tpl.activate" data-id="${t.id}">Aktifkan</button>` : ''}<button class="icon-btn" data-act="tpl.del" data-id="${t.id}" title="Hapus">${I('trash')}</button></div></div>`; }).join('') || `<div class="card span-all">${UI.empty('Belum ada template Google Docs. Dokumen tetap bisa dicetak dengan format bawaan. Klik "Pasang Template Bawaan" untuk mulai mengubah desain.', 'doc')}</div>`}</div>`;
   }
 };
+function tplGuide() {
+  const cat = DC.CATALOG;
+  return `<div class="card-head"><div class="ic">${I('braces')}</div><div style="flex:1"><h3>Daftar Penanda (Placeholder)</h3><p>Ketik penanda di Google Docs persis seperti di bawah. Format lama <span class="code-pill">[KUNCI]</span> tetap didukung.</p></div><button class="icon-btn" data-act="tpl.guide">${I('x')}</button></div>
+    <div class="grid g2" style="gap:14px">${Object.keys(cat).map(g => `<div><div class="mono xs muted" style="letter-spacing:.06em">${E(g.toUpperCase())}</div><div class="stack mt-s" style="gap:4px">${Object.keys(cat[g]).map(k => `<div class="row small" style="gap:8px;align-items:flex-start"><button class="code-pill" data-act="tpl.copy" data-v="${E(g === 'Baris berulang' ? '{{#ITEM}} … {{/ITEM}}' : '{{' + k + '}}')}" title="Salin">${E(g === 'Baris berulang' ? '{{#ITEM}}' : '{{' + k + '}}')}</button><span class="muted">${E(cat[g][k])}</span></div>`).join('')}</div></div>`).join('')}</div>
+    <h3 class="mt">Pengubah format</h3><div class="row wrap mt-s mono xs" style="gap:6px">${['{{TOTAL|rupiah}}', '{{TOTAL|terbilang:rupiah}}', '{{TANGGAL_SP|tanggal}}', '{{NAMA_PPK|kapital}}', '{{NIP_PPK|nip}}', '{{KEGIATAN|bawaan:-}}', '{{TTD_PPK|lebar:120}}', '{{LOGO|lebar:62}}'].map(x => `<span class="tag-mini">${E(x)}</span>`).join('')}</div>
+    <p class="small muted mt-s">Baris tabel barang: buat <b>satu baris tabel</b> berisi <span class="code-pill">{{ITEM.NO}}</span> <span class="code-pill">{{ITEM.URAIAN}}</span> <span class="code-pill">{{ITEM.VOLUME}}</span> … — baris diulang otomatis untuk setiap barang. Bagian bersyarat: <span class="code-pill">{{?NO_FAKTUR}} … {{/NO_FAKTUR}}</span> hanya tampil bila ada nilainya.</p>`;
+}
 function srcOptions(sel) {
   const src = S.sources || {};
   return Object.keys(src).map(g => `<optgroup label="${E(g)}">${Object.keys(src[g]).map(k => `<option value="${E(k)}" ${k === sel ? 'selected' : ''}>${E(src[g][k])} — ${E(k)}</option>`).join('')}</optgroup>`).join('');
 }
-function srcType(k) {
+function srcType(k, p) {
   if (!k) return ['—', ''];
-  if (k.startsWith('tabel.')) return ['Dynamic Table Array', 'Table Grid Ingestion (Docs)'];
+  if (k === 'auto') return [DC.IMAGE_KEYS[p] ? 'Gambar' : 'Otomatis', 'Sesuai nama kunci'];
+  if (k === 'baris') return ['Baris berulang', 'Per item barang'];
+  if (k === 'gambar') return ['Gambar', 'Logo / TTD PNG'];
+  if (k.startsWith('tabel.')) return ['Tabel (format lama)', 'Tabel disisipkan'];
   if (k === 'manual') return ['Input Manual', 'Diisi saat generate'];
   if (k === 'kosong') return ['Kosong', '—'];
-  if (/terbilang/.test(k)) return ['String', 'Terbilang Rupiah'];
-  if (/tanggal|tgl|jatuh_tempo/.test(k)) return ['Date (ISO→ID)', 'DD MMMM YYYY'];
-  if (/total|subtotal|ppn|pph|dpp|netto|nilai$/.test(k)) return ['Currency', 'Rp 1.234.567'];
-  if (/terbilang/.test(k)) return ['String', 'Terbilang Rupiah'];
-  if (/nomor/.test(k)) return ['String (Auto Code)', 'Kode dokumen'];
-  return ['String', 'Teks'];
+  if (/terbilang/i.test(k)) return ['Teks', 'Terbilang'];
+  if (/tanggal|tgl|jatuh_tempo/i.test(k)) return ['Tanggal', 'DD MMMM YYYY'];
+  if (/total|subtotal|ppn|pph|dpp|netto|nilai$|jumlah/i.test(k)) return ['Rupiah', 'Rp 1.234.567'];
+  if (/nomor/i.test(k)) return ['Teks (kode)', 'Nomor dokumen'];
+  return ['Teks', 'Teks'];
 }
 function tplPanel(d) {
-  if (!d) return `<div class="card-head"><div class="ic">${I('scan')}</div><div style="flex:1"><h3>Registrasi & Auto-Scan Template Google Docs</h3><p>Parser otomatis token <span class="code-pill">\\[[A-Z0-9_]+\\]</span> pada dokumen Google Docs RSUD</p></div><span class="chip st-gray nodot">${I('lock')} Docs Workspace API</span></div>
-    <div class="grid" style="grid-template-columns:2fr 1.2fr 1.2fr;gap:14px"><div class="field"><label>Google Docs URL / Shared Document Link<span class="hint" style="color:var(--success-dark)">Akun pemilik script harus punya akses</span></label><div class="input-ic">${I('link')}<input class="input mono" id="tp-url" placeholder="https://docs.google.com/document/d/…/edit"></div></div>
-      <div class="field"><label>Nama Dokumen Template</label><input class="input" id="tp-nama" placeholder="Template Berita Acara Serah Terima"></div><div class="field"><label>Jenis Dokumen Pengadaan</label><select class="select" id="tp-jenis">${UI.opt(JENIS_DOK, 'PO')}</select></div></div>
-    <div class="row mt"><span class="small muted row">${I('info')} Dokumen diekstrak otomatis ke skema JSON; placeholder baru terdeteksi setiap kali Scan Ulang.</span><span class="spacer"></span><button class="btn btn-success" data-act="tpl.scan">${I('scan')} Scan Placeholder Dokumen</button></div>`;
+  if (!d) return `<div class="card-head"><div class="ic">${I('scan')}</div><div style="flex:1"><h3>Daftarkan Template Kustom (Google Docs)</h3><p>Penanda <span class="code-pill">{{KUNCI}}</span> atau <span class="code-pill">[KUNCI]</span> pada dokumen dipindai otomatis</p></div></div>
+    <div class="grid tpl-reg" style="gap:14px"><div class="field"><label>URL Google Docs<span class="hint" style="color:var(--success-dark)">Akun pemilik script harus punya akses</span></label><div class="input-ic">${I('link')}<input class="input mono" id="tp-url" placeholder="https://docs.google.com/document/d/…/edit"></div></div>
+      <div class="field"><label>Nama Template</label><input class="input" id="tp-nama" placeholder="SP Film Radiologi — desain 2026"></div><div class="field"><label>Jenis Dokumen</label><select class="select" id="tp-jenis">${UI.opt(JENIS_DOK, 'PO')}</select></div></div>
+    <div class="row wrap mt"><span class="small muted row">${I('info')} Tip: salin template bawaan lalu ubah — lebih cepat daripada membuat dari nol.</span><span class="spacer"></span><button class="btn btn-success" data-act="tpl.scan">${I('scan')} Scan Penanda</button></div>`;
   const mapped = d.placeholders.filter(p => d.mapping[p] && d.mapping[p] !== 'manual').length;
   const unm = d.placeholders.filter(p => !d.mapping[p]);
-  return `<div class="card-head"><div class="ic">${I('scan')}</div><div style="flex:1"><h3>${d.id ? 'Mapping Template: ' + E(d.nama) : 'Registrasi & Auto-Scan Template Google Docs'}</h3><p>${E(d.title || '')} · <a href="${E(d.doc_url)}" target="_blank" rel="noopener">buka dokumen</a></p></div><button class="icon-btn" data-act="tpl.close">${I('x')}</button></div>
-    <div class="grid" style="grid-template-columns:2fr 1.2fr 1.2fr;gap:14px"><div class="field"><label>Google Docs URL</label><input class="input mono" value="${E(d.doc_url)}" disabled></div><div class="field"><label>Nama Dokumen Template</label><input class="input" id="tp-nama" value="${E(d.nama)}" data-in="tpl.f" data-f="nama"></div><div class="field"><label>Jenis Dokumen</label><select class="select" data-ch="tpl.f" data-f="jenis">${UI.opt(JENIS_DOK, d.jenis)}</select></div></div>
+  return `<div class="card-head"><div class="ic">${I('scan')}</div><div style="flex:1;min-width:0"><h3>${d.id ? 'Mapping: ' + E(d.nama) : 'Template Baru'}</h3><p class="ellipsis">${E(d.title || '')} · <a href="${E(d.doc_url)}" target="_blank" rel="noopener">buka dokumen</a></p></div><button class="icon-btn" data-act="tpl.close">${I('x')}</button></div>
+    <div class="grid tpl-reg" style="gap:14px"><div class="field"><label>URL Google Docs</label><input class="input mono" value="${E(d.doc_url)}" disabled></div><div class="field"><label>Nama Template</label><input class="input" id="tp-nama" value="${E(d.nama)}" data-in="tpl.f" data-f="nama"></div><div class="field"><label>Jenis Dokumen</label><select class="select" data-ch="tpl.f" data-f="jenis">${UI.opt(JENIS_DOK, d.jenis === 'CUSTOM' ? 'CUSTOM' : DC.normJenis(d.jenis))}</select></div></div>
     <div class="card tint mt" style="padding:16px">
-      <div class="card row" style="padding:10px 14px"><span style="color:var(--success)">${I('check')}</span><b class="small" style="flex:1">${d.placeholders.length} Placeholder Berhasil Dideteksi dari Google Docs!</b><span class="mono xs muted">Hash #${E(d.hash || '')}</span><span class="chip st-blue nodot">${mapped} Mapped</span><span class="chip ${unm.length ? 'st-amber' : 'st-green'} nodot">${unm.length ? unm.length + ' belum' : '100% Ready'}</span></div>
-      ${d.added && d.added.length ? `<div class="info-box mt-s" style="background:var(--success-tint)">${I('plus')}<span>Placeholder baru sejak scan terakhir: <b class="mono">${d.added.map(E).join(', ')}</b></span></div>` : ''}${d.removed && d.removed.length ? `<div class="info-box mt-s" style="background:var(--warn-tint)">${I('alert')}<span>Tidak lagi ada di dokumen: <b class="mono">${d.removed.map(E).join(', ')}</b></span></div>` : ''}
-      <div class="mono xs mt" style="letter-spacing:.08em">DAFTAR TOKEN DIEKSTRAK:</div><div class="row wrap mt-s">${d.placeholders.map(p => `<span class="code-pill" style="${String(d.mapping[p]).startsWith('tabel.') ? 'background:var(--primary);color:#fff' : ''}">● [${E(p)}]</span>`).join('')}</div>
-      <div class="row mt"><h3 style="flex:1">Field Mapping Preview & Validation</h3><span class="mono xs">Schema ID: <b>SCHEMA_${E(d.jenis)}_${YEAR}</b></span></div>
-      <div class="card pad-0 mt-s"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tag Placeholder Google Docs</th><th>Tipe Data</th><th style="min-width:280px">Sumber Data Sistem / Form Input</th><th>Kesesuaian Format</th><th>Status</th></tr></thead><tbody>
-      ${d.placeholders.map(p => { const k = d.mapping[p] || ''; const [tp, fm] = srcType(k); return `<tr><td><span class="code-pill" style="${k.startsWith('tabel.') ? 'background:var(--primary-deep);color:#fff' : ''}">[${E(p)}]</span></td><td class="mono xs">${tp}</td><td><select class="select input-sm" data-ch="tpl.map" data-p="${E(p)}"><option value="">— pilih sumber —</option>${srcOptions(k)}</select></td><td class="mono xs">${fm}</td><td>${!k ? '<span class="chip st-red">Belum</span>' : k.startsWith('tabel.') ? '<span class="chip st-teal">Array Synced</span>' : k === 'manual' ? '<span class="chip st-amber">Manual</span>' : '<span class="chip st-green">Auto Bound</span>'}</td></tr>`; }).join('')}
+      <div class="card row wrap" style="padding:10px 14px"><span style="color:var(--success)">${I('check')}</span><b class="small" style="flex:1">${d.placeholders.length} penanda terdeteksi</b><span class="chip st-blue nodot">${mapped} terhubung</span><span class="chip ${unm.length ? 'st-amber' : 'st-green'} nodot">${unm.length ? unm.length + ' belum' : 'Siap'}</span></div>
+      ${d.added && d.added.length ? `<div class="info-box mt-s" style="background:var(--success-tint)">${I('plus')}<span>Penanda baru: <b class="mono">${d.added.map(E).join(', ')}</b></span></div>` : ''}${d.removed && d.removed.length ? `<div class="info-box mt-s" style="background:var(--warn-tint)">${I('alert')}<span>Tidak lagi ada di dokumen: <b class="mono">${d.removed.map(E).join(', ')}</b></span></div>` : ''}
+      <div class="card pad-0 mt"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Penanda</th><th>Tipe</th><th style="min-width:260px">Sumber Data</th><th>Format</th><th>Status</th></tr></thead><tbody>
+      ${d.placeholders.map(p => { const k = d.mapping[p] || ''; const [tp, fm] = srcType(k, p); return `<tr><td><span class="code-pill">${E(tok(p))}</span></td><td class="mono xs">${tp}</td><td><select class="select input-sm" data-ch="tpl.map" data-p="${E(p)}"><option value="">— pilih sumber —</option>${srcOptions(k)}</select></td><td class="mono xs">${fm}</td><td>${!k ? '<span class="chip st-red">Belum</span>' : k === 'manual' ? '<span class="chip st-amber">Manual</span>' : k === 'kosong' ? '<span class="chip st-gray">Kosong</span>' : '<span class="chip st-green">Otomatis</span>'}</td></tr>`; }).join('')}
       </tbody></table></div></div>
-      <div class="row small mt" style="color:${unm.length ? 'var(--warn-text)' : 'var(--success-dark)'}">${I(unm.length ? 'alert' : 'check')} ${unm.length ? 'Lengkapi mapping sebelum mengaktifkan template.' : 'Seluruh placeholder valid dan siap di-generate ke PDF.'}</div>
-      <div class="row mt"><button class="btn btn-outline" data-act="tpl.preview">${I('eye')} Preview Output Sample</button><span class="spacer"></span><button class="btn btn-outline" data-act="tpl.save" data-st="Draft">Simpan sebagai Draft</button><button class="btn btn-success" data-act="tpl.save" data-st="Aktif">${I('check')} Simpan & Aktifkan Template</button></div></div>`;
+      <div class="row small mt" style="color:${unm.length ? 'var(--warn-text)' : 'var(--success-dark)'}">${I(unm.length ? 'alert' : 'check')} ${unm.length ? 'Lengkapi mapping sebelum mengaktifkan template.' : 'Semua penanda terhubung. Penanda "Manual" ditanyakan saat generate PDF.'}</div>
+      <div class="row wrap mt" style="gap:8px"><button class="btn btn-outline" data-act="tpl.preview">${I('eye')} Contoh Nilai</button><span class="spacer"></span><button class="btn btn-outline" data-act="tpl.save" data-st="Draft">Simpan Draft</button><button class="btn btn-success" data-act="tpl.save" data-st="Aktif">${I('check')} Simpan & Aktifkan</button></div></div>`;
 }
 const tplRefresh = () => { const p = document.getElementById('tpl-panel'); if (p) p.innerHTML = tplPanel(ps('template').draft); };
-Act['tpl.new'] = () => { ps('template').draft = null; tplRefresh(); document.getElementById('tpl-url').focus(); };
+Act['tpl.new'] = () => { ps('template').draft = null; tplRefresh(); const u = document.getElementById('tp-url'); if (u) { u.scrollIntoView({ behavior: 'smooth', block: 'center' }); u.focus(); } };
+Act['tpl.guide'] = () => { const s = ps('template'); s.guide = !s.guide; App.refreshCurrent(); if (s.guide) setTimeout(() => { const g = document.getElementById('tpl-guide'); if (g) g.scrollIntoView({ behavior: 'smooth' }); }, 30); };
+Act['tpl.copy'] = el => { try { navigator.clipboard.writeText(el.dataset.v); UI.toast('Disalin: ' + el.dataset.v, 'ok', 1500); } catch (e) { } };
 Act['tpl.close'] = () => { ps('template').draft = null; tplRefresh(); };
 Act['tpl.f'] = el => { ps('template').draft[el.dataset.f] = el.value; };
 Act['tpl.map'] = el => { ps('template').draft.mapping[el.dataset.p] = el.value; tplRefresh(); };
+/** Contoh data terbaru per jenis → id rekaman untuk pratinjau */
+function sampleRef(j) {
+  if (j === 'PO') return (S.po.find(p => ACTIVE_PO(p)) || S.po[0] || {}).id;
+  if (j === 'BAPB' || j === 'BASTP') return (S.bast.find(b => b.status === 'Ditandatangani') || S.bast[0] || {}).id;
+  if (j === 'INVOICE') return (S.invoice[0] || {}).id;
+}
+Act['tpl.sample'] = el => { const id = sampleRef(el.dataset.j); if (!id) { UI.toast('Belum ada data ' + (DOC_LABEL[el.dataset.j] || el.dataset.j) + ' untuk contoh pratinjau', 'warn'); return; } Doc.open(el.dataset.j, id); };
+Act['tpl.install'] = async el => {
+  const ada = S.templates.filter(t => String(t.is_default) === '1').length;
+  if (!await UI.confirm('Pasang template bawaan?', `Format bawaan SP, BAPB, BAST Hasil Pekerjaan, dan Invoice akan disalin menjadi <b>4 file Google Docs</b> di folder <b>Template_Docs</b> Drive Anda, lalu diaktifkan (kecuali jenis yang sudah memakai template kustom).${ada ? '<br><br><span class="muted">Sudah ada ' + ada + ' template bawaan terpasang — salinan baru akan dibuat.</span>' : ''}`, { ok: 'Pasang' })) return;
+  UI.busy(el, true);
+  try {
+    const r = await API.call('installDefaultTemplates', { templates: Doc.installPayload(), logo: await Doc.logoDataUrl(), aktifkan: true }, { timeout: 240000 });
+    S.templates = r.data.templates; if (r.data.settings) S.settings = r.data.settings; Store.upsertMany('templates', []);
+    UI.toast(r.message, 'ok', 5000); App.refreshCurrent();
+  } catch (e) { UI.toast('Gagal memasang: ' + e.message, 'err', 8000); }
+  UI.busy(el, false);
+};
 async function doScan(url, jenis, base, btn) {
   UI.busy(btn, true);
   try {
     const r = await API.call('scanTemplate', { url, jenis, id: base && base.id }, { timeout: 120000 });
     ps('template').draft = Object.assign({ nama: r.data.title, jenis, status: 'Aktif' }, base || {}, { doc_url: base ? base.doc_url : url, doc_id: r.data.doc_id, title: r.data.title, placeholders: r.data.placeholders, mapping: r.data.mapping, hash: r.data.hash, added: base ? r.data.added : [], removed: base ? r.data.removed : [] });
     tplRefresh(); document.getElementById('tpl-panel').scrollIntoView({ behavior: 'smooth' });
-    UI.toast(r.data.placeholders.length + ' placeholder terdeteksi', 'ok');
+    UI.toast(r.data.placeholders.length + ' penanda terdeteksi', 'ok');
   } catch (e) { UI.toast(e.message, 'err', 6000); UI.busy(btn, false); }
 }
 Act['tpl.scan'] = el => {
   const url = document.getElementById('tp-url').value.trim(); if (!url) { UI.toast('Tempel URL Google Docs', 'err'); return; }
-  doScan(url, document.getElementById('tp-jenis').value, null, el).then(() => { const d = ps('template').draft; if (d) { const n = document.getElementById('tp-nama'); if (n && !n.value) n.value = d.nama; } });
-  const nm = document.getElementById('tp-nama').value.trim(); if (nm) setTimeout(() => { const d = ps('template').draft; if (d) d.nama = nm; }, 0);
+  const nm = document.getElementById('tp-nama').value.trim();
+  doScan(url, document.getElementById('tp-jenis').value, null, el).then(() => { const d = ps('template').draft; if (d && nm) { d.nama = nm; tplRefresh(); } });
 };
 Act['tpl.rescan'] = el => { const t = Store.byId('templates', el.dataset.id); doScan(t.doc_url, t.jenis, JSON.parse(JSON.stringify(t)), el); };
 Act['tpl.edit'] = el => { const t = Store.byId('templates', el.dataset.id); ps('template').draft = JSON.parse(JSON.stringify({ ...t, mapping: t.mapping || {}, placeholders: t.placeholders || [] })); tplRefresh(); document.getElementById('tpl-panel').scrollIntoView({ behavior: 'smooth' }); };
+Act['tpl.activate'] = el => { const t = Store.byId('templates', el.dataset.id); saveTpl({ ...JSON.parse(JSON.stringify(t)), status: 'Aktif' }); };
 Act['tpl.del'] = async el => {
   const t = Store.byId('templates', el.dataset.id);
-  if (!await UI.confirm('Hapus template?', `Template <b>${E(t.nama)}</b> dihapus dari sistem (file Google Docs tidak dihapus).`, { danger: true, ok: 'Hapus' })) return;
+  if (!await UI.confirm('Hapus template?', `Template <b>${E(t.nama)}</b> dihapus dari sistem (file Google Docs tidak dihapus). Dokumen tetap bisa dicetak dengan format bawaan.`, { danger: true, ok: 'Hapus' })) return;
   API.mutate({ label: 'Hapus template', apply: () => Store.remove('templates', t.id), rollback: o => Store.upsert('templates', o), run: () => API.call('deleteTemplate', { id: t.id }) });
 };
+function saveTpl(d) {
+  const unm = (d.placeholders || []).filter(p => !(d.mapping || {})[p]);
+  if (d.status === 'Aktif' && unm.length) { UI.toast('Penanda belum di-mapping: ' + unm.join(', '), 'err'); return false; }
+  const id = d.id || UI.uid();
+  const payload = { id, nama: d.nama, jenis: d.jenis, doc_url: d.doc_url, doc_id: d.doc_id, placeholders: d.placeholders, mapping: d.mapping, hash: d.hash, status: d.status, bidang: d.bidang };
+  const existed = Store.byId('templates', id), nj = DC.normJenis(d.jenis);
+  API.mutate({
+    label: 'Simpan template', apply: () => { if (d.status === 'Aktif' && d.jenis !== 'CUSTOM') S.templates.filter(t => DC.normJenis(t.jenis) === nj && t.id !== id && t.status === 'Aktif').forEach(t => Store.upsert('templates', { id: t.id, status: 'Nonaktif' })); return Store.upsert('templates', { ...(existed || {}), ...payload, last_scan: new Date().toISOString() }); },
+    rollback: o => existed ? Store.upsert('templates', o) : Store.remove('templates', id), run: () => API.call('saveTemplate', payload), onSuccess: r => { S.templates = r.data.templates; Store.upsertMany('templates', []); }
+  });
+  return true;
+}
 Act['tpl.save'] = el => {
   const d = ps('template').draft; d.status = el.dataset.st;
   const nm = document.getElementById('tp-nama'); if (nm) d.nama = nm.value.trim() || d.nama;
   if (!d.nama) { UI.toast('Isi nama template', 'err'); return; }
-  const unm = d.placeholders.filter(p => !d.mapping[p]);
-  if (d.status === 'Aktif' && unm.length) { UI.toast('Placeholder belum di-mapping: ' + unm.join(', '), 'err'); return; }
-  const payload = { id: d.id, nama: d.nama, jenis: d.jenis, doc_url: d.doc_url, doc_id: d.doc_id, placeholders: d.placeholders, mapping: d.mapping, hash: d.hash, status: d.status };
-  const id = d.id || UI.uid(); payload.id = id;
-  const existed = Store.byId('templates', id);
-  API.mutate({
-    label: 'Simpan template', apply: () => { if (d.status === 'Aktif' && d.jenis !== 'CUSTOM') S.templates.filter(t => t.jenis === d.jenis && t.id !== id && t.status === 'Aktif').forEach(t => Store.upsert('templates', { id: t.id, status: 'Nonaktif' })); return Store.upsert('templates', { ...payload, last_scan: new Date().toISOString() }); },
-    rollback: o => existed ? Store.upsert('templates', o) : Store.remove('templates', id), run: () => API.call('saveTemplate', payload), onSuccess: r => { S.templates = r.data.templates; Store.upsertMany('templates', []); }
-  });
-  ps('template').draft = null; tplRefresh();
+  if (saveTpl(d)) { ps('template').draft = null; tplRefresh(); }
 };
-function sampleCtx(jenis) {
-  const st = S.settings, ctx = { 'umum.tanggal_hari_ini': TGL(UI.iso(), 1), 'umum.rs_nama': st.RS_NAMA, 'umum.rs_nama_lengkap': st.RS_NAMA_LENGKAP, 'umum.rs_alamat': st.RS_ALAMAT, 'umum.pemda': st.PEMDA, 'umum.ppk_nama': st.PPK_NAMA, 'umum.ppk_nip': st.PPK_NIP, 'umum.pengadaan_nama': st.PENGADAAN_NAMA, 'umum.pengadaan_nip': st.PENGADAAN_NIP };
-  const put = (pre, o) => o && Object.keys(o).forEach(k => { let v = o[k]; if (typeof v === 'object') return; if (/tanggal|tgl_|jatuh_tempo/.test(k)) v = TGL(v, 1); else if (/^(subtotal|ppn|pph|dpp|netto|total|nilai)$/.test(k)) v = RP(v); ctx[pre + '.' + k] = v; });
-  let po = null, b = null, i = null, k = null;
-  if (jenis === 'BAST') { b = S.bast.find(x => x.status === 'Ditandatangani'); po = b && Store.po(b.po_id); }
-  else if (jenis === 'INVOICE') { i = S.invoice[0]; po = i && Store.po(i.po_id); b = i && Store.byId('bast', i.bast_id); }
-  else if (jenis === 'KONTRAK') { k = S.kontrak[0]; po = k && Store.po(k.po_id); }
-  else po = S.po.find(p => ACTIVE_PO(p)) || S.po[0];
-  put('po', po); put('bast', b); put('invoice', i); put('kontrak', k); put('vendor', Store.vendor((po || k || {}).vendor_id));
-  if (po) { ctx['po.total_terbilang'] = terbilang(po.total); ctx['tabel.items_po'] = Store.poItems(po.id).length + ' baris item PO'; }
-  if (b) ctx['tabel.items_bast'] = Store.bastItems(b.id).length + ' baris barang diterima';
-  if (i) ctx['invoice.netto_terbilang'] = terbilang(i.netto);
-  if (k) ctx['kontrak.nilai_terbilang'] = terbilang(k.nilai);
-  return ctx;
-}
 Act['tpl.preview'] = () => {
-  const d = ps('template').draft, ctx = sampleCtx(d.jenis);
-  UI.modal({ title: 'Preview Output Sample', sub: 'Nilai contoh diambil dari data terbaru ' + E(d.jenis), size: 'lg', body: `<table class="tbl"><thead><tr><th>Placeholder</th><th>Nilai yang akan diisi</th></tr></thead><tbody>${d.placeholders.map(p => { const k = d.mapping[p]; const v = k === 'manual' ? '<i class="muted">(diisi manual saat generate)</i>' : k === 'kosong' ? '<i class="muted">(kosong)</i>' : ctx[k] != null && ctx[k] !== '' ? E(ctx[k]) : '<span style="color:var(--danger)">— belum ada data contoh —</span>'; return `<tr><td class="mono small">[${E(p)}]</td><td>${v}</td></tr>`; }).join('')}</tbody></table>`, foot: '<button class="btn" data-close>Tutup</button>' });
+  const d = ps('template').draft, j = DC.normJenis(d.jenis), id = sampleRef(j === 'CUSTOM' ? 'PO' : j);
+  const c = id ? Doc.ctx(j === 'CUSTOM' ? 'PO' : j, id) : null;
+  const val = p => {
+    const k = d.mapping[p];
+    if (k === 'manual') return '<i class="muted">(diisi manual saat generate)</i>';
+    if (k === 'kosong') return '<i class="muted">(kosong)</i>';
+    if (p.charAt(0) === '#' || p.indexOf('.') > 0 || k === 'baris') return '<i class="muted">(baris per item barang' + (c ? ': ' + (c.ROWS.ITEM || []).length + ' baris' : '') + ')</i>';
+    if (DC.IMAGE_KEYS[p] || k === 'gambar') return '<i class="muted">(gambar)</i>';
+    if (k && (k.indexOf('.') > 0)) return '<i class="muted">(kunci format lama — diisi server)</i>';
+    if (!c) return '<span class="muted">— belum ada data contoh —</span>';
+    const v = DC.value(c, p, d.mapping, {}).d;
+    return v !== '' && v != null ? E(v) : '<span style="color:var(--danger)">— kosong pada data contoh —</span>';
+  };
+  UI.modal({ title: 'Contoh Nilai Penanda', sub: c ? 'Dari data terbaru: ' + E(c.D.NOMOR || '') : 'Belum ada data contoh', size: 'lg', body: `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Penanda</th><th>Nilai</th></tr></thead><tbody>${d.placeholders.map(p => `<tr><td class="mono small">${E(tok(p))}</td><td>${val(p)}</td></tr>`).join('')}</tbody></table></div>`, foot: '<button class="btn" data-close>Tutup</button>' });
 };
 
 /* =====================================================================
@@ -232,16 +268,16 @@ Act['lap.export'] = () => {
 /* =====================================================================
    PENGATURAN SISTEM (ADMIN)
    ===================================================================== */
-const SET_TABS = [{ id: 'users', l: 'Pengguna & Role' }, { id: 'app', l: 'Pengaturan Aplikasi' }, { id: 'backup', l: 'Backup & Restore' }, { id: 'migrasi', l: 'Migrasi Data' }, { id: 'log', l: 'Log Aktivitas' }, { id: 'sistem', l: 'Sistem & Performa' }];
-const MIG_SHEETS = ['Users', 'Vendor', 'Barang_Jasa', 'PO', 'PO_Detail', 'BAST', 'BAST_Detail', 'Invoice', 'Kontrak', 'Template_Dokumen', 'Log_Aktivitas'];
+const SET_TABS = [{ id: 'users', l: 'Pengguna & Role' }, { id: 'app', l: 'Pengaturan Aplikasi' }, { id: 'dokumen', l: 'Dokumen & TTD' }, { id: 'backup', l: 'Backup & Restore' }, { id: 'migrasi', l: 'Migrasi Data' }, { id: 'log', l: 'Log Aktivitas' }, { id: 'sistem', l: 'Sistem & Performa' }];
+const MIG_SHEETS = ['Users', 'Vendor', 'Barang_Jasa', 'Penerima', 'PO', 'PO_Detail', 'BAST', 'BAST_Detail', 'Invoice', 'Template_Dokumen', 'CRM_Kontak', 'Log_Aktivitas'];
 Pages.pengaturan = {
-  title: 'Pengaturan Sistem', roles: ['ADMIN'], deps: ['users', 'vendors'],
+  title: 'Pengaturan Sistem', roles: ['ADMIN'], deps: ['users', 'vendors', 'penerima'],
   render(el, param) {
     const st = ps('pengaturan', { tab: 'users', mig: { sheets: MIG_SHEETS.filter(s => s !== 'Log_Aktivitas'), overwrite: false, src: '' } });
     if (param && SET_TABS.some(t => t.id === param)) st.tab = param;
     el.innerHTML = pageHead({ eyebrow: `<span class="tag navy">Administrasi Sistem</span> • VMS ${E(S.settings.RS_NAMA || '')}`, title: 'Pengaturan Sistem', sub: 'Manajemen pengguna & role, konfigurasi aplikasi, backup/restore database, migrasi data, dan audit trail.' }) +
       tabsBar('set.tab', SET_TABS, st.tab) + `<div id="set-body">${setBody(st)}</div>`;
-    if (st.tab === 'backup') loadBackups(); if (st.tab === 'log') loadLogs(); if (st.tab === 'sistem') sysPing();
+    if (st.tab === 'backup') loadBackups(); if (st.tab === 'log') loadLogs(); if (st.tab === 'sistem') sysPing(); if (st.tab === 'dokumen') loadLogoPrev();
   }
 };
 function setBody(st) {
@@ -253,16 +289,17 @@ function setBody(st) {
       ${list.map(u => `<tr><td><b>${E(u.nama)}</b><div class="sub">${E(u.jabatan || '')}${u.nip ? ' · NIP ' + E(u.nip) : ''}</div></td><td class="mono small">${E(u.email)}</td><td><span class="chip ${u.role === 'ADMIN' ? 'st-red' : u.role === 'PPK' ? 'st-green' : u.role === 'VENDOR' ? 'st-gray' : 'st-blue'} nodot">${E(ROLE_LABEL[u.role] || u.role)}</span></td><td class="small">${E(u.vendor_id ? vName(u.vendor_id) : '-')}</td><td class="small muted">${u.last_login ? UI.ago(u.last_login) : 'Belum pernah'}</td><td>${CHIP(u.status)}${String(u.must_change) === '1' ? '<div class="xs muted">wajib ganti password</div>' : ''}</td>
       <td class="row" style="gap:2px"><button class="icon-btn" data-act="usr.edit" data-id="${u.id}" title="Edit">${I('edit')}</button><button class="icon-btn" data-act="usr.reset" data-id="${u.id}" title="Reset password">${I('key')}</button></td></tr>`).join('')}</tbody></table></div></div>
       <div class="card mt"><h3>Matriks Hak Akses (RBAC)</h3><p class="small muted">Diberlakukan di server (Apps Script) — bukan hanya di tampilan.</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Modul</th><th>Admin</th><th>PPK</th><th>Pejabat Pengadaan</th><th>PPTK</th><th>Vendor</th></tr></thead><tbody>
-      ${[['Kelola Data Vendor', 'CRUD', 'Lihat', 'CRUD', 'Lihat', 'Profil sendiri'], ['Buat/Edit PO', 'CRUD', 'Lihat', 'CRUD', 'Lihat', 'PO miliknya'], ['Approval PO', '—', 'Setujui/Tolak', '—', '—', '—'], ['Input BAST', 'CRUD', 'Lihat', 'Lihat', 'CRUD', 'BAST miliknya'], ['Invoice & Pembayaran', 'Buat & Bayar', 'Setujui & Bayar', 'Buat', 'Lihat', 'Status'], ['Kelola Template', 'CRUD', '—', '—', '—', '—'], ['Laporan & Ekspor', 'Penuh', 'Lihat', 'Lihat', 'Lihat', '—'], ['Pengguna, Backup, Migrasi', 'Penuh', '—', '—', '—', '—']].map(r => `<tr>${r.map((c, i) => `<td class="${i ? 'small' : ''}">${i && c === '—' ? '<span class="muted">—</span>' : E(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+      ${[['Kelola Data Vendor', 'CRUD', 'Lihat', 'CRUD', 'Lihat', 'Profil sendiri'], ['Buat/Edit PO', 'CRUD', 'Lihat', 'CRUD', 'Lihat', 'PO miliknya'], ['Approval PO', '—', 'Setujui/Tolak', '—', '—', '—'], ['Input BAPB (Penerimaan)', 'CRUD', 'Lihat', 'Lihat', 'CRUD', 'BAPB miliknya'], ['WhatsApp & CRM', 'Penuh', 'CRM (lihat)', 'Penuh', '—', '—'], ['Invoice & Pembayaran', 'Buat & Bayar', 'Setujui & Bayar', 'Buat', 'Lihat', 'Status'], ['Kelola Template', 'CRUD', '—', '—', '—', '—'], ['Laporan & Ekspor', 'Penuh', 'Lihat', 'Lihat', 'Lihat', '—'], ['Pengguna, Backup, Migrasi', 'Penuh', '—', '—', '—', '—']].map(r => `<tr>${r.map((c, i) => `<td class="${i ? 'small' : ''}">${i && c === '—' ? '<span class="muted">—</span>' : E(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
   }
   if (st.tab === 'app') {
     const s = S.settings;
     const f = (k, l, h, o = {}) => `<div class="field ${o.full ? 'full' : ''}"><label>${l}</label><input class="input ${o.mono ? 'mono' : ''}" name="${k}" value="${E(s[k] || '')}" ${o.type ? `type="${o.type}"` : ''}>${h ? `<span class="help">${h}</span>` : ''}</div>`;
     return `<form id="setf" class="grid g2"><div class="card"><div class="card-head"><div class="ic">${I('building')}</div><h3>Identitas Instansi (kop dokumen)</h3></div><div class="form-grid">${f('RS_NAMA', 'Nama Singkat RS', '')}${f('RS_NAMA_LENGKAP', 'Nama Lengkap RS', '')}${f('PEMDA', 'Pemerintah Daerah', '', { full: 1 })}${f('RS_ALAMAT', 'Alamat', '', { full: 1 })}${f('PPK_NAMA', 'Nama PPK', 'Dipakai di dokumen jika akun PPK tidak ada')}${f('PPK_NIP', 'NIP PPK', '', { mono: 1 })}${f('PENGADAAN_NAMA', 'Nama Pejabat Pengadaan', '')}${f('PENGADAAN_NIP', 'NIP Pejabat Pengadaan', '', { mono: 1 })}</div></div>
-      <div class="stack"><div class="card"><div class="card-head"><div class="ic">${I('money')}</div><h3>Pajak & Aturan Transaksi</h3></div><div class="form-grid">${f('PPN_RATE', 'Tarif PPN (%)', 'Berlaku untuk PO & invoice baru', { mono: 1 })}${f('PPH22_RATE', 'Tarif PPh 22 (%)', '', { mono: 1 })}${f('MIN_FOTO_BAST', 'Minimal foto BAST', 'Wajib saat BAST ditandatangani', { mono: 1 })}${f('SESSION_HOURS', 'Lama sesi login (jam)', '', { mono: 1 })}</div></div>
-      <div class="card"><div class="card-head"><div class="ic">${I('mail')}</div><h3>Notifikasi, Performa & Backup</h3></div><div class="form-grid">${f('NOTIF_EMAIL', 'Email notifikasi (1=aktif, 0=mati)', 'Dikirim otomatis via Gmail tiap 1 menit', { mono: 1 })}${f('APP_URL', 'URL aplikasi (GitHub Pages)', 'Tautan pada email notifikasi')}${f('BOOT_TAHUN', 'Tahun lalu yang dimuat', 'Data lebih lama dimuat saat diminta (menjaga kecepatan)', { mono: 1 })}${f('BACKUP_KEEP', 'Jumlah backup disimpan', '', { mono: 1 })}${f('BACKUP_JAM', 'Jam backup harian (WIB)', 'Pasang ulang trigger setelah mengubah', { mono: 1 })}</div></div></div></form>
+      <div class="stack"><div class="card"><div class="card-head"><div class="ic">${I('money')}</div><h3>Pajak & Aturan Transaksi</h3></div><div class="form-grid">${f('PPN_RATE', 'Tarif PPN (%)', 'Berlaku untuk PO & invoice baru', { mono: 1 })}${f('PPH22_RATE', 'Tarif PPh 22 (%)', '', { mono: 1 })}${f('MIN_FOTO_BAST', 'Minimal foto BAPB', 'Wajib saat BAPB disahkan', { mono: 1 })}${f('SESSION_HOURS', 'Lama sesi login (jam)', '', { mono: 1 })}</div></div>
+      <div class="card"><div class="card-head"><div class="ic">${I('mail')}</div><h3>Notifikasi, Performa & Backup</h3></div><div class="form-grid">${f('NOTIF_EMAIL', 'Email notifikasi (1=aktif, 0=mati)', 'WhatsApp diatur di menu WhatsApp & Notifikasi', { mono: 1 })}${f('APP_URL', 'URL aplikasi (GitHub Pages)', 'Tautan pada email notifikasi')}${f('BOOT_TAHUN', 'Tahun lalu yang dimuat', 'Data lebih lama dimuat saat diminta (menjaga kecepatan)', { mono: 1 })}${f('BACKUP_KEEP', 'Jumlah backup disimpan', '', { mono: 1 })}${f('BACKUP_JAM', 'Jam backup harian (WIB)', 'Pasang ulang trigger setelah mengubah', { mono: 1 })}</div></div></div></form>
       <div class="sticky-bar"><span class="small muted">Perubahan berlaku untuk seluruh pengguna setelah disimpan.</span><span class="spacer"></span><button class="btn" data-act="set.save">${I('check')} Simpan Pengaturan</button></div>`;
   }
+  if (st.tab === 'dokumen') return setDokumen();
   if (st.tab === 'backup') return `<div class="grid g3"><div class="card"><div class="card-head"><div class="ic" style="background:#d6f5df;color:var(--success)">${I('db')}</div><div style="flex:1"><h3>Backup Sekarang</h3><p>Salinan penuh spreadsheet database ke folder Backup_Database di Drive</p></div></div><button class="btn btn-success" style="width:100%" data-act="bk.now">${I('db')} Buat Backup</button><div class="small muted mt-s" id="bk-last"></div></div>
       <div class="card"><div class="card-head"><div class="ic">${I('clock')}</div><div style="flex:1"><h3>Backup Otomatis</h3><p>Harian pukul ${E(S.settings.BACKUP_JAM || 1)}:00 WIB, menyimpan ${E(S.settings.BACKUP_KEEP || 30)} salinan terakhir</p></div></div><button class="btn btn-outline" style="width:100%" data-act="bk.trig">${I('refresh')} Pasang Ulang Trigger Otomatis</button><div class="xs muted mt-s">Trigger: backup harian, email notifikasi (1 mnt), warmup cache (10 mnt), housekeeping, invalidasi cache saat sheet diedit manual.</div></div>
       <div class="card"><div class="card-head"><div class="ic">${I('down')}</div><div style="flex:1"><h3>Export JSON</h3><p>Seluruh tabel dalam satu file portabel (tanpa hash password)</p></div></div><button class="btn btn-outline" style="width:100%" data-act="bk.json">${I('down')} Unduh Export JSON</button></div></div>
@@ -277,7 +314,7 @@ function setBody(st) {
       <label class="check act-item mt"><input type="checkbox" data-ch="mg.ow" ${m.overwrite ? 'checked' : ''}><span class="small"><b>Timpa data yang sudah ada</b><br>Default mati: data yang sudah ada hanya diperbarui status/field penting (keputusan di app baru tidak ditimpa).</span></label>
       <div class="row mt"><button class="btn btn-outline" data-act="mg.scan">${I('scan')} Pindai (Dry-run)</button><span class="spacer"></span><button class="btn" data-act="mg.run">${I('swap')} Jalankan Import</button></div>
       <div id="mg-res" class="mt"></div></div>
-      <div class="stack"><div class="card"><h3>Prinsip Migrasi Aman</h3>${[['Idempoten', 'Upsert berdasar kunci alami (email, NPWP, nomor PO/BAST/invoice). Import 2× = tanpa data dobel.'], ['Baca per nama header', 'Urutan & nama kolom boleh berbeda (alias otomatis: "Nama Perusahaan" → nama, "No HP" → telepon).'], ['Remap relasi', 'ID vendor/PO lama dipetakan ke ID baru bila berbeda.'], ['Aman untuk angka 0', 'Nomor telepon/NIP dinormalisasi agar angka 0 di depan tidak hilang.'], ['Auto-backup', 'Backup pre-import dibuat otomatis sebelum import nyata.']].map(([a, b]) => `<div class="act-item"><b class="small">${a}</b><div class="xs muted">${b}</div></div>`).join('')}</div>
+      <div class="stack"><div class="card"><h3>Prinsip Migrasi Aman</h3>${[['Idempoten', 'Upsert berdasar kunci alami (email, NPWP, nomor SP/BAPB/invoice). Import 2× = tanpa data dobel.'], ['Baca per nama header', 'Urutan & nama kolom boleh berbeda (alias otomatis: "Nama Perusahaan" → nama, "No HP" → telepon).'], ['Remap relasi', 'ID vendor/PO lama dipetakan ke ID baru bila berbeda.'], ['Aman untuk angka 0', 'Nomor telepon/NIP dinormalisasi agar angka 0 di depan tidak hilang.'], ['Auto-backup', 'Backup pre-import dibuat otomatis sebelum import nyata.']].map(([a, b]) => `<div class="act-item"><b class="small">${a}</b><div class="xs muted">${b}</div></div>`).join('')}</div>
       <div class="card"><h3>Checklist Cutover</h3><ol class="small" style="padding-left:18px;line-height:24px;margin:8px 0 0"><li>Pindai (dry-run) → periksa angka & peringatan</li><li>Jalankan Import → cek vendor, PO, dan akun</li><li>Uji login dengan 1 akun tiap role</li><li>Tepat sebelum pindah: <b>Jalankan Import sekali lagi</b> (delta sync)</li><li>Umumkan alamat baru, arsipkan deployment lama</li></ol><p class="xs muted">Sesi login lama tidak ikut pindah — pengguna cukup login ulang. Akun ADMIN lama tidak diimpor.</p></div>
       <div class="card"><h3>Import CSV Cepat</h3><p class="small muted">Untuk data dari luar (Excel/marketplace).</p><div class="row"><button class="btn btn-soft btn-sm" data-act="vendor.importcsv">Rekanan (CSV)</button><button class="btn btn-soft btn-sm" data-act="brg.import">Master Barang (CSV)</button></div></div></div></div>`;
   }
@@ -317,6 +354,93 @@ Act['set.save'] = el => {
   const old = { ...S.settings };
   API.mutate({ label: 'Simpan pengaturan', apply: () => { Object.assign(S.settings, x); Store.persist(); App.renderTopbar(); }, rollback: () => { S.settings = old; }, run: () => API.call('saveSettings', x), onSuccess: r => { S.settings = r.data; Store.persist(); } });
 };
+/* ---------- Tab "Dokumen & TTD": kop, format nomor, mode TTD, master penerima, spesimen pejabat ---------- */
+const ROMAWI_FMT = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+function fmtNomorPreview(fmt, n = 7) {
+  const d = new Date(), y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0');
+  return String(fmt || '').replace(/\{URUT4\}/g, String(n).padStart(4, '0')).replace(/\{URUT3\}/g, String(n).padStart(3, '0')).replace(/\{URUT\}/g, n).replace(/\{TAHUN\}/g, y).replace(/\{BULAN_ROMAWI\}/g, ROMAWI_FMT[d.getMonth()]).replace(/\{BULAN\}/g, m);
+}
+function setDokumen() {
+  const s = S.settings;
+  const f = (k, l, h, o = {}) => `<div class="field ${o.full ? 'full' : ''}"><label>${l}</label><input class="input ${o.mono ? 'mono' : ''}" name="${k}" value="${E(s[k] || '')}" ${o.fmt ? 'data-in="set.fmt"' : ''}>${h ? `<span class="help" ${o.fmt ? `id="fp-${k}"` : ''}>${h}</span>` : ''}</div>`;
+  const sel = (k, l, opts, h) => `<div class="field"><label>${l}</label><select class="select" name="${k}">${UI.opt(opts, s[k] || opts[0].v)}</select>${h ? `<span class="help">${h}</span>` : ''}</div>`;
+  const pj = (S.penerima || []).slice().sort((a, b) => (a.ruangan || '').localeCompare(b.ruangan || '') || a.nama.localeCompare(b.nama));
+  const pejabat = S.users.filter(u => ['PPK', 'PPTK', 'PENGADAAN', 'ADMIN'].includes(u.role) && u.status !== 'Nonaktif').sort((a, b) => a.role.localeCompare(b.role));
+  return `<form id="setf" class="grid g2">
+    <div class="card"><div class="card-head"><div class="ic">${I('building')}</div><div style="flex:1"><h3>Kop Dokumen</h3><p>Dipakai SP, BAPB, BAST Hasil Pekerjaan & Invoice</p></div></div>
+      <div class="row wrap mb" style="gap:14px;align-items:center"><div class="logo-box" id="logo-prev"><img src="${E(DEFAULT_LOGO())}" alt="Logo"></div><div class="stack" style="gap:6px"><b class="small">Logo kop</b><span class="xs muted">PNG/JPG, latar transparan disarankan</span><div class="row wrap" style="gap:6px"><label class="btn btn-outline btn-sm">${I('upload')} Ganti logo<input type="file" accept="image/png,image/jpeg,image/webp" hidden data-ch="set.logo"></label>${s.LOGO_FILE_ID ? `<button type="button" class="btn btn-ghost btn-sm" data-act="set.logodel">Pakai logo bawaan</button>` : ''}</div></div></div>
+      <div class="form-grid">${f('KOP_INSTANSI', 'Kop baris 1', '', { full: 1 })}${f('KOP_JUDUL', 'Kop baris 2', '', { full: 1 })}${f('KOP_NAMA', 'Kop baris 3 (nama RS)', '', { full: 1 })}${f('KOP_ALAMAT', 'Alamat', '', { full: 1 })}${f('KOP_KONTAK', 'Telepon / Fax', '', { full: 1 })}${f('KOP_LAMAN', 'Laman & Pos-el', '', { full: 1 })}${f('RS_NAMA_DOK', 'Nama RS di badan dokumen', '')}${f('RS_KOTA', 'Kota penandatanganan', '')}</div></div>
+    <div class="stack">
+      <div class="card"><div class="card-head"><div class="ic">${I('pen')}</div><div style="flex:1"><h3>Tanda Tangan & Kertas</h3><p>Ganti teks "VALIDATED/DISETUJUI" dengan TTD gambar atau kosong untuk TTD basah</p></div></div>
+        <div class="form-grid">${sel('TTD_MODE', 'Mode tanda tangan', [{ v: 'gambar', l: 'TTD gambar (PNG spesimen) otomatis' }, { v: 'basah', l: 'Dikosongkan — TTD basah setelah cetak' }], 'Tetap bisa diubah per dokumen saat mencetak')}${sel('KERTAS', 'Ukuran kertas', [{ v: 'F4', l: 'F4 / Folio (215 × 330 mm)' }, { v: 'A4', l: 'A4 (210 × 297 mm)' }])}</div></div>
+      <div class="card"><div class="card-head"><div class="ic">${I('braces')}</div><div style="flex:1"><h3>Format Penomoran</h3><p>Token: <span class="code-pill">{URUT}</span> <span class="code-pill">{URUT4}</span> <span class="code-pill">{TAHUN}</span> <span class="code-pill">{BULAN}</span> <span class="code-pill">{BULAN_ROMAWI}</span></p></div></div>
+        <div class="form-grid">${[['FMT_NOMOR_PO', 'Nomor Surat Pesanan'], ['FMT_NOMOR_BAPB', 'Nomor BAPB'], ['FMT_NOMOR_BASTP', 'Nomor BAST Hasil Pekerjaan'], ['FMT_NOMOR_INV', 'Nomor Invoice']].map(([k, l]) => f(k, l, 'Contoh: ' + E(fmtNomorPreview(s[k])), { full: 1, mono: 1, fmt: 1 })).join('')}</div></div>
+      <div class="card"><div class="card-head"><div class="ic">${I('file')}</div><h3>Isian Bawaan Surat Pesanan</h3></div>
+        <div class="form-grid">${f('DEFAULT_KEGIATAN', 'Kegiatan', '', { full: 1 })}${f('DEFAULT_SUB_KEGIATAN', 'Sub kegiatan', '', { full: 1 })}${f('DEFAULT_WAKTU', 'Waktu penyelesaian (hari)', '', { mono: 1 })}</div></div>
+    </div></form>
+    <div class="grid g2 mt">
+      <div class="card pad-0"><div class="row wrap" style="padding:14px 16px;gap:8px"><div style="flex:1;min-width:200px"><h3>Penanggung Jawab Ruangan / Penerima</h3><p class="small muted" style="margin:2px 0 0">Penanda tangan BAPB. Simpan spesimen TTD agar terisi otomatis.</p></div><button class="btn btn-sm" data-act="pj.edit">${I('plus')} Tambah</button></div>
+        <div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Nama / NIP</th><th>Ruangan</th><th>TTD</th><th></th></tr></thead><tbody>
+        ${pj.map(x => `<tr><td data-l="Nama"><b class="small">${E(x.nama)}</b><div class="sub mono">${E(x.nip || '')}</div><div class="sub">${E(x.jabatan || '')}</div></td><td class="small" data-l="Ruangan">${E(x.ruangan || '-')}${x.status === 'Nonaktif' ? ' <span class="chip st-gray nodot">Nonaktif</span>' : ''}</td><td data-l="TTD">${x.ttd_file_id ? '<span class="chip st-green nodot">Ada</span>' : '<span class="chip st-gray nodot">Belum</span>'}</td><td class="row" style="gap:2px"><button class="icon-btn" data-act="pj.edit" data-id="${x.id}" title="Edit">${I('edit')}</button>${can('admin') ? `<button class="icon-btn" data-act="pj.del" data-id="${x.id}" title="Hapus">${I('trash')}</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="4">${UI.empty('Belum ada data. Penerima baru juga bisa ditambahkan langsung dari form BAPB.', 'user')}</td></tr>`}</tbody></table></div></div>
+      <div class="card pad-0"><div style="padding:14px 16px"><h3>Spesimen TTD Pejabat</h3><p class="small muted" style="margin:2px 0 0">PPK (SP, BASTP, Invoice) dan PPTK (Mengetahui BAPB). Pejabat juga bisa mengunggah sendiri lewat menu profil → "TTD Saya".</p></div>
+        <div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Pejabat</th><th>Role</th><th>TTD</th><th></th></tr></thead><tbody>
+        ${pejabat.map(u => `<tr><td data-l="Nama"><b class="small">${E(u.nama)}</b><div class="sub mono">${E(u.nip || '')}</div></td><td data-l="Role"><span class="chip nodot">${E(ROLE_LABEL[u.role] || u.role)}</span></td><td data-l="TTD">${u.ttd_file_id ? '<span class="chip st-green nodot">Ada</span>' : '<span class="chip st-gray nodot">Belum</span>'}</td><td><button class="btn btn-outline btn-xs" data-act="usr.ttd" data-id="${u.id}">${I('pen')} Atur</button></td></tr>`).join('')}</tbody></table></div></div>
+    </div>
+    <div class="sticky-bar"><span class="small muted hide-sm">Berlaku untuk semua dokumen yang dicetak setelah disimpan.</span><span class="spacer"></span><button class="btn btn-outline" data-act="go" data-href="template">${I('doc')} Kelola Template</button><button class="btn" data-act="set.save">${I('check')} Simpan Pengaturan</button></div>`;
+}
+function loadLogoPrev() {
+  const id = S.settings.LOGO_FILE_ID, box = document.getElementById('logo-prev'); if (!id || !box) return;
+  DocImg.load([id]).then(m => { if (m[id] && document.body.contains(box)) box.innerHTML = `<img src="${m[id]}" alt="Logo">`; });
+}
+Act['set.fmt'] = el => { const h = document.getElementById('fp-' + el.name); if (h) h.textContent = 'Contoh: ' + fmtNomorPreview(el.value); };
+Act['set.logo'] = async el => {
+  const f = el.files[0]; if (!f) return;
+  try {
+    const c = await UI.compressImage(f, 600, .92);
+    const b64 = /png/.test(f.type) ? await UI.readB64(f) : c.base64;
+    const r = await API.call('saveTtd', { target: 'logo', base64: b64 });
+    S.settings.LOGO_FILE_ID = r.data.file_id; Store.persist(); UI.toast('Logo kop diperbarui', 'ok'); setRefresh(); loadLogoPrev();
+  } catch (e) { UI.toast('Gagal mengunggah logo: ' + e.message, 'err'); }
+};
+Act['set.logodel'] = async () => {
+  try { await API.call('saveTtd', { target: 'logo', remove: true }); S.settings.LOGO_FILE_ID = ''; Store.persist(); UI.toast('Kembali memakai logo bawaan', 'ok'); setRefresh(); } catch (e) { UI.toast(e.message, 'err'); }
+};
+/** Modal TTD (dipakai untuk pejabat & penerima) */
+function ttdModal({ title, sub, spesimen, onSave }) {
+  const m = UI.modal({ title, sub, body: `<div id="tm-ttd"></div><p class="xs muted mt-s">TTD disimpan sebagai PNG di folder privat Google Drive. Dokumen yang sudah disahkan sebelumnya tetap memakai TTD lama.</p>`, foot: `${spesimen ? `<button class="btn btn-ghost" style="color:var(--danger)" id="tm-del">Hapus spesimen</button>` : ''}<span class="spacer"></span><button class="btn btn-outline" data-close>Batal</button><button class="btn" id="tm-ok">${I('check')} Simpan</button>` });
+  const p = UI.ttdPicker(m.q('#tm-ttd'), { spesimen, modes: ['pad', 'upload'], value: 'pad' });
+  m.q('#tm-ok').onclick = async () => { const t = p.get(); if (t.mode !== 'gambar') { UI.toast('Gambar atau unggah TTD terlebih dahulu', 'err'); return; } UI.busy(m.q('#tm-ok'), true); try { await onSave(t.base64); m.close(); } catch (e) { UI.toast(e.message, 'err'); UI.busy(m.q('#tm-ok'), false); } };
+  if (spesimen) m.q('#tm-del').onclick = async () => { try { await onSave(null); m.close(); } catch (e) { UI.toast(e.message, 'err'); } };
+}
+Act['usr.ttd'] = el => {
+  const u = Store.byId('users', el.dataset.id);
+  ttdModal({ title: 'Spesimen TTD', sub: E(u.nama) + ' · ' + E(ROLE_LABEL[u.role] || u.role), spesimen: u.ttd_file_id, onSave: async b64 => {
+    const r = await API.call('saveTtd', b64 ? { target: u.id === S.user.id ? 'me' : 'user', id: u.id, base64: b64 } : { target: u.id === S.user.id ? 'me' : 'user', id: u.id, remove: true });
+    Store.upsert('users', { id: u.id, ttd_file_id: r.data.file_id }); if (u.id === S.user.id) { S.user.ttd_file_id = r.data.file_id; Store.persist(); }
+    UI.toast(r.message, 'ok'); setRefresh();
+  } });
+};
+Act['pj.edit'] = el => {
+  const x = el.dataset.id ? Store.byId('penerima', el.dataset.id) : { id: UI.uid(), status: 'Aktif', jabatan: 'Penanggung Jawab Ruangan' };
+  const m = UI.modal({ title: el.dataset.id ? 'Edit Penanggung Jawab' : 'Tambah Penanggung Jawab Ruangan', size: 'lg', body: `<form class="form-grid" id="pjf"><div class="field"><label>Nama lengkap & gelar <span class="req">*</span></label><input class="input" name="nama" value="${E(x.nama || '')}"></div><div class="field"><label>NIP</label><input class="input mono" name="nip" inputmode="numeric" value="${E(x.nip || '')}"></div>
+    <div class="field"><label>Jabatan</label><input class="input" name="jabatan" value="${E(x.jabatan || '')}"></div><div class="field"><label>Ruangan / Unit</label><input class="input" name="ruangan" value="${E(x.ruangan || '')}" placeholder="Instalasi Farmasi"></div>
+    <div class="field"><label>No. WhatsApp</label><input class="input mono" name="telepon" inputmode="tel" value="${E(x.telepon || '')}"></div><div class="field"><label>Status</label><select class="select" name="status">${UI.opt(['Aktif', 'Nonaktif'], x.status)}</select></div></form>
+    <div class="mono xs mt" style="letter-spacing:.06em">SPESIMEN TANDA TANGAN (OPSIONAL)</div><div id="pj-ttd" class="mt-s"></div>`,
+    foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn" id="pj-ok">${I('check')} Simpan</button>` });
+  const p = UI.ttdPicker(m.q('#pj-ttd'), { spesimen: x.ttd_file_id || '', modes: x.ttd_file_id ? ['spesimen', 'pad', 'upload'] : ['pad', 'upload'], value: x.ttd_file_id ? 'spesimen' : 'pad' });
+  m.q('#pj-ok').onclick = async () => {
+    const d = UI.formData(m.q('#pjf')); if (!d.nama) { UI.toast('Nama wajib diisi', 'err'); return; }
+    const t = p.get(); UI.busy(m.q('#pj-ok'), true);
+    try { const r = await API.call('savePenerima', { ...x, ...d, ttd_base64: t.mode === 'gambar' ? t.base64 : '' }); Store.upsert('penerima', r.data.penerima); UI.toast(r.message, 'ok'); m.close(); setRefresh(); }
+    catch (e) { UI.toast(e.message, 'err'); UI.busy(m.q('#pj-ok'), false); }
+  };
+};
+Act['pj.del'] = async el => {
+  const x = Store.byId('penerima', el.dataset.id);
+  if (!await UI.confirm('Hapus penanggung jawab?', `<b>${E(x.nama)}</b> dihapus dari master. BAPB lama tidak berubah.`, { danger: true, ok: 'Hapus' })) return;
+  API.mutate({ label: 'Hapus penerima', apply: () => Store.remove('penerima', x.id), rollback: o => Store.upsert('penerima', o), run: () => API.call('deletePenerima', { id: x.id }), onSuccess: () => setRefresh() });
+};
+
 // --- Backup
 async function loadBackups() {
   try {

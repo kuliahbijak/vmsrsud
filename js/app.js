@@ -7,8 +7,9 @@ const PS = {};            // state UI per halaman (filter, pagination) — tetap
 const ROLE_LABEL = { ADMIN: 'Administrator', PPK: 'PPK Pengadaan', PENGADAAN: 'Pejabat Pengadaan', PPTK: 'PPTK', VENDOR: 'Rekanan / Vendor' };
 const CAN = {
   vendorEdit: ['ADMIN', 'PENGADAAN'], poEdit: ['ADMIN', 'PENGADAAN'], poApprove: ['PPK'], bastEdit: ['ADMIN', 'PPTK'],
-  invEdit: ['ADMIN', 'PENGADAAN'], invApprove: ['PPK'], invPay: ['ADMIN', 'PPK'], kontrakEdit: ['ADMIN', 'PENGADAAN'], kontrakApprove: ['PPK'],
-  template: ['ADMIN'], admin: ['ADMIN'], report: ['ADMIN', 'PPK', 'PENGADAAN', 'PPTK'], genDoc: ['ADMIN', 'PENGADAAN', 'PPK', 'PPTK'], internal: ['ADMIN', 'PPK', 'PENGADAAN', 'PPTK']
+  invEdit: ['ADMIN', 'PENGADAAN'], invApprove: ['PPK'], invPay: ['ADMIN', 'PPK'],
+  template: ['ADMIN'], admin: ['ADMIN'], report: ['ADMIN', 'PPK', 'PENGADAAN', 'PPTK'], genDoc: ['ADMIN', 'PENGADAAN', 'PPK', 'PPTK'], internal: ['ADMIN', 'PPK', 'PENGADAAN', 'PPTK'],
+  penerima: ['ADMIN', 'PPTK', 'PENGADAAN'], wa: ['ADMIN', 'PENGADAAN'], notifConfig: ['ADMIN'], crm: ['ADMIN', 'PENGADAAN', 'PPK'], crmEdit: ['ADMIN', 'PENGADAAN']
 };
 const can = k => !!(Store.S.user && CAN[k].includes(Store.S.user.role));
 const isVendor = () => Store.S.user && Store.S.user.role === 'VENDOR';
@@ -23,24 +24,32 @@ const App = (() => {
   function navItems() {
     const r = Store.S.user.role, V = r === 'VENDOR';
     const pendingPO = Store.S.po.filter(p => p.status === 'Menunggu Approval').length
-      + Store.S.invoice.filter(i => i.status === 'Menunggu Verifikasi').length + Store.S.kontrak.filter(k => k.status === 'Menunggu Approval').length;
+      + Store.S.invoice.filter(i => i.status === 'Menunggu Verifikasi').length;
     return [
       { id: 'dashboard', l: V ? 'Portal Rekanan' : 'Dashboard', i: 'dash' },
       { id: 'vendor', l: V ? 'Profil Perusahaan' : 'Daftar Vendor', i: 'building' },
-      { id: 'po', l: V ? 'Pesanan (PO) Saya' : 'Purchase Order (PO)', i: 'receipt' },
+      { id: 'po', l: V ? 'Surat Pesanan Saya' : 'Surat Pesanan (PO)', i: 'receipt', s: 'SP / PO' },
       { id: 'approval', l: 'Approval', i: 'shield', roles: ['PPK'], badge: pendingPO },
-      { id: 'bast', l: V ? 'BAST Diterima' : 'Input BAST', i: 'clipcheck' },
-      { id: 'invoice', l: V ? 'Tagihan Saya' : 'Invoice & Pembayaran', i: 'money' },
-      { id: 'kontrak', l: 'Kontrak', i: 'contract' },
+      { id: 'bast', l: V ? 'BAPB / Penerimaan' : 'Penerimaan Barang (BAPB)', i: 'clipcheck', s: 'BAPB' },
+      { id: 'invoice', l: V ? 'Tagihan Saya' : 'Invoice & Pembayaran', i: 'money', s: 'Invoice' },
       { id: 'template', l: 'Kelola Template', i: 'file', roles: ['ADMIN'] },
       { id: 'laporan', l: 'Laporan Pengadaan', i: 'chart', roles: CAN.report },
+      { id: 'notifwa', l: 'WhatsApp & Notifikasi', i: 'wa', roles: CAN.wa },
+      { id: 'crm', l: 'CRM Kontak', i: 'contacts', roles: CAN.crm },
       { id: 'pengaturan', l: 'Pengaturan Sistem', i: 'gear', roles: ['ADMIN'] }
     ].filter(n => !n.roles || n.roles.includes(r));
   }
   function renderNav() {
     const base = (current && current.page || '').split('-')[0];
-    document.getElementById('nav').innerHTML = navItems().map(n =>
+    const items = navItems();
+    document.getElementById('nav').innerHTML = items.map(n =>
       `<a href="#/${n.id}" class="${base === n.id ? 'active' : ''}" data-nav="${n.id}">${icon(n.i)}<span>${n.l}</span>${n.badge ? `<span class="badge">${n.badge}</span>` : ''}</a>`).join('');
+    // Navigasi bawah untuk layar HP (4 menu utama + Menu)
+    const bn = document.getElementById('bnav');
+    if (bn) {
+      const pick = items.filter(n => ['dashboard', 'po', 'approval', 'bast', 'invoice'].includes(n.id)).slice(0, 4);
+      bn.innerHTML = pick.map(n => `<a href="#/${n.id}" class="${base === n.id ? 'active' : ''}">${icon(n.i)}<span>${n.s || n.l.split(' ')[0]}</span>${n.badge ? `<i class="bdot">${n.badge}</i>` : ''}</a>`).join('') + `<button type="button" data-act="nav.more">${icon('menu')}<span>Menu</span></button>`;
+    }
   }
   function renderTopbar() {
     const u = Store.S.user;
@@ -108,6 +117,7 @@ const App = (() => {
 
   // ---------------- AUTH & BOOT ----------------
   async function boot() {
+    API.warmUp();
     Store.subscribe(onData);
     API.onStatus(renderConn);
     window.addEventListener('hashchange', route);
@@ -137,8 +147,9 @@ const App = (() => {
         <div><div class="mono xs" style="letter-spacing:.14em;color:#94f4ad;margin-bottom:12px">VENDOR MANAGEMENT SYSTEM · BLUD</div>
           <h1>Pengadaan barang & jasa rumah sakit, terkendali dari pesanan hingga pembayaran.</h1>
           <div class="feat">
-            <div>${icon('check')}<span>Alur digital PO → Approval PPK → BAST → Invoice & SP2D dalam satu sistem</span></div>
-            <div>${icon('check')}<span>Template dokumen resmi otomatis dari Google Docs</span></div>
+            <div>${icon('check')}<span>Alur digital Surat Pesanan → Approval PPK → BAPB → Invoice & SP2D</span></div>
+            <div>${icon('check')}<span>Cetak SP, BAPB, BASTP & Invoice ke PDF — TTD gambar atau TTD basah</span></div>
+            <div>${icon('check')}<span>Notifikasi WhatsApp & Email otomatis</span></div>
             <div>${icon('check')}<span>Audit trail lengkap & portal terbatas untuk rekanan</span></div>
           </div></div>
         <div class="mono xs" style="color:#8fb2cc">Google Apps Script · Sheets · Drive · Docs</div>
@@ -227,7 +238,8 @@ const App = (() => {
     const ms = window.VMS_CONFIG.POLL_MS || 45000;
     pollTimer = setInterval(poll, ms);
     fullTimer = setInterval(() => { if (document.visibilityState === 'visible') refreshData(true); }, 5 * 60000);
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); else { if (hiddenAt && Date.now() - hiddenAt > 120000) API.warmUp(); poll(); } });
   }
   async function poll() {
     if (document.visibilityState !== 'visible' || !Store.S.user || API.status().pending) return;
@@ -268,7 +280,7 @@ const App = (() => {
     closeDropdowns();
     const dd = document.createElement('div'); dd.className = 'dropdown me-dd';
     dd.innerHTML = `<div style="padding:10px"><b>${esc(Store.S.user.nama)}</b><div class="small muted">${esc(Store.S.user.email)}</div></div>
-      <button data-act="me.password">${icon('key')} Ganti password</button><button data-act="me.refresh">${icon('refresh')} Muat ulang data</button><button data-act="me.logout" style="color:var(--danger)">${icon('logout')} Keluar</button>`;
+      <button data-act="me.ttd">${icon('pen')} TTD Saya (spesimen)</button><button data-act="me.password">${icon('key')} Ganti password</button><button data-act="me.refresh">${icon('refresh')} Muat ulang data</button><button data-act="me.logout" style="color:var(--danger)">${icon('logout')} Keluar</button>`;
     document.body.appendChild(dd);
   }
 
@@ -297,11 +309,31 @@ const App = (() => {
     const n = Store.S.notif.find(x => x.id === el.dataset.id); if (!n) return;
     if (String(n.dibaca) !== '1') { n.dibaca = '1'; Store.persist(); renderTopbar(); API.call('markNotifRead', { ids: [n.id] }).catch(() => { }); }
     closeDropdowns();
-    const map = { PO: isVendor() ? 'po/' : (Store.S.user.role === 'PPK' && Store.po(n.ref_id) && Store.po(n.ref_id).status === 'Menunggu Approval' ? 'approval/' : 'po/'), BAST: 'bast/', Invoice: 'invoice/', Kontrak: 'kontrak/', Vendor: 'vendor/' };
+    const map = { PO: isVendor() ? 'po/' : (Store.S.user.role === 'PPK' && Store.po(n.ref_id) && Store.po(n.ref_id).status === 'Menunggu Approval' ? 'approval/' : 'po/'), BAST: 'bast/', Invoice: 'invoice/', Vendor: 'vendor/' };
     if (map[n.ref_type]) go(map[n.ref_type] + n.ref_id);
   };
   Act['notif.readAll'] = () => { Store.S.notif.forEach(n => n.dibaca = '1'); Store.persist(); renderTopbar(); closeDropdowns(); API.call('markNotifRead', { all: true }).catch(() => { }); };
   Act['me.logout'] = () => logout();
+  Act['nav.more'] = () => document.body.classList.toggle('nav-open');
+  /** TTD spesimen akun sendiri (PNG) — dipakai otomatis pada dokumen saat mode TTD gambar */
+  Act['me.ttd'] = () => {
+    closeDropdowns();
+    const cur = Store.myTtd();
+    const V = isVendor();
+    const m = UI.modal({ title: 'TTD Saya (spesimen)', sub: V ? 'Tanda tangan pimpinan perusahaan untuk Invoice & BASTP' : 'Dibubuhkan otomatis pada dokumen yang Anda tanda tangani (SP, BAPB, Invoice)',
+      body: `<div id="mt-pick"></div><div class="info-box mt">${icon('lock')}<span>Gambar disimpan privat di Google Drive instansi dan hanya dibubuhkan oleh server ke dokumen. Admin dapat mengatur agar dokumen dicetak tanpa TTD gambar (TTD basah).</span></div>`,
+      foot: `${cur ? '<button class="btn btn-outline-danger" id="mt-del">Hapus spesimen</button>' : ''}<span class="spacer"></span><button class="btn btn-outline" data-close>Batal</button><button class="btn" id="mt-ok">${icon('check')} Simpan TTD</button>` });
+    const pk = UI.ttdPicker(m.q('#mt-pick'), { spesimen: cur, modes: cur ? ['spesimen', 'pad', 'upload'] : ['pad', 'upload'] });
+    const done = (fid) => { if (fid) DocImg.forget(fid); Store.S.user.ttd_file_id = fid; const u = Store.userById(Store.S.user.id); if (u) Store.upsert('users', { id: u.id, ttd_file_id: fid }); if (V && Store.S.user.vendor_id) Store.upsert('vendors', { id: Store.S.user.vendor_id, ttd_file_id: fid }); Store.persist(); };
+    m.q('#mt-ok').onclick = async () => {
+      const g = pk.get(); if (g.mode === 'spesimen') { m.close(); return; }
+      if (g.mode !== 'gambar') { UI.toast('Goreskan atau unggah tanda tangan terlebih dahulu', 'err'); return; }
+      UI.busy(m.q('#mt-ok'), true);
+      try { const r = await API.call('saveTtd', { target: 'me', base64: g.base64 }); DocImg.put(r.data.file_id, g.base64); done(r.data.file_id); m.close(); UI.toast('Spesimen TTD tersimpan', 'ok'); }
+      catch (e) { UI.toast(e.message, 'err'); UI.busy(m.q('#mt-ok'), false); }
+    };
+    if (cur) m.q('#mt-del').onclick = async () => { try { await API.call('saveTtd', { target: 'me', remove: true }); done(''); m.close(); UI.toast('Spesimen TTD dihapus', 'ok'); } catch (e) { UI.toast(e.message, 'err'); } };
+  };
   Act['me.refresh'] = async () => { closeDropdowns(); UI.toast('Memuat ulang data…'); await refreshData(); UI.toast('Data terbaru dimuat', 'ok'); };
   Act['me.password'] = () => {
     closeDropdowns();

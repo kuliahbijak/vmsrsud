@@ -29,7 +29,7 @@ function steps(po) {
   const inv = Store.invOfPO(po.id);
   let at = { 'Draft': 0, 'Menunggu Approval': 1, 'Disetujui PPK': 2, 'BAST Parsial': 3, 'BAST Terbit': 3, 'Selesai': 5, 'Ditolak': 1 }[po.status] || 0;
   if (at === 3 && inv.length) at = 4;
-  const lbl = ['Draft', 'Approval PPK', 'Disetujui', 'BAST', 'Invoice', 'Selesai'];
+  const lbl = ['Draft', 'Approval PPK', 'SP Terbit', 'BAPB', 'Invoice', 'Selesai'];
   return `<div class="steps">${order.map((s, i) => `<div class="st ${po.status === 'Ditolak' && i === 1 ? 'bad' : i < at || po.status === 'Selesai' ? 'done' : i === at ? 'cur' : ''}">${lbl[i]}</div>`).join('')}</div>`;
 }
 
@@ -41,26 +41,12 @@ function openFromParam(el, page, param, exists, fn) {
   setTimeout(() => fn(param, () => { el._opened = null; App.clearParam(page); }), 0);
 }
 
-// ---------- dokumen PO (preview kertas) ----------
+// ---------- pratinjau dokumen resmi (format SP/BAPB/BASTP/Invoice dari doc-format.js) ----------
+// v1.1: teks "VALIDATED/DISETUJUI" diganti TTD gambar (spesimen PNG) atau dikosongkan untuk TTD basah.
 const Docs = {
-  poPaper(po, { watermark = 'UNTUK APPROVAL' } = {}) {
-    const v = Store.vendor(po.vendor_id) || {}, st = S.settings, items = Store.poItems(po.id);
-    const ppk = S.users.find(u => u.role === 'PPK') || {};
-    return `<div class="paper">${watermark ? `<div class="wm">${watermark}</div>` : ''}
-      <div class="kop"><div style="width:34px;height:34px;background:var(--primary);border-radius:4px;display:grid;place-items:center;flex:none">${UI.logo()}</div>
-        <div style="flex:1"><small>${E((st.PEMDA || '').toUpperCase())}</small><b>${E(st.RS_NAMA_LENGKAP || st.RS_NAMA || 'RSUD')}</b><div class="xs">${E(st.RS_ALAMAT || '')}</div></div>
-        <div class="right"><span class="mono xs" style="background:var(--tint-2);padding:3px 6px;font-weight:600">FORM: PO-04</span><div class="mono xs muted" style="margin-top:4px">SIK-Kemkes Sync</div></div></div>
-      <h2>SURAT PESANAN / PURCHASE ORDER (PO)</h2><div class="nomor"><span>Nomor: ${E(po.nomor_po || '(menunggu nomor)')}</span></div>
-      <div class="meta"><div><div class="k">PENYEDIA / VENDOR:</div><b style="font-size:14px">${E(v.nama || '-')}</b><div>NIB: ${E(v.nib || '-')} | NPWP: ${E(v.npwp || '-')}</div><div>${E(v.alamat || '')}</div>${v.lkpp_id ? `<div>Penyedia LKPP: ${E(v.lkpp_id)}</div>` : ''}</div>
-        <div class="right"><div class="k">RUJUKAN PENGADAAN:</div><div>Paket: ${E(po.paket || '-')}</div><div>Sumber Dana: ${E(po.sumber_dana || '-')}</div><div>Unit: ${E(po.unit || '-')}</div>${po.rujukan ? `<div>E-Katalog: ${E(po.rujukan)}</div>` : ''}<div>Tanggal: ${TGL(po.tanggal, 1)}</div></div></div>
-      <div class="tbl-wrap"><table><thead><tr><th>NO</th><th>DESKRIPSI BARANG/JASA</th><th class="right">QTY</th><th>SATUAN</th><th class="right">HARGA SATUAN</th><th class="right">JUMLAH</th></tr></thead><tbody>
-      ${items.map((d, i) => `<tr><td>${i + 1}</td><td>${E(d.nama)}${d.spesifikasi ? `<div class="mono xs muted">${E(d.spesifikasi)}</div>` : ''}</td><td class="right num">${UI.num(d.qty)}</td><td>${E(d.satuan)}</td><td class="right num">${UI.num(d.harga)}</td><td class="right num">${UI.num(d.subtotal || d.qty * d.harga)}</td></tr>`).join('')}
-      <tr><td></td><td colspan="4" class="right">Subtotal</td><td class="right num">${UI.num(po.subtotal)}</td></tr><tr><td></td><td colspan="4" class="right">PPN ${E(st.PPN_RATE || 11)}%</td><td class="right num">${UI.num(po.ppn)}</td></tr></tbody></table></div>
-      <div class="total"><div>Total Nilai Transaksi<br>(Termasuk PPN ${E(st.PPN_RATE || 11)}%):<div class="xs muted" style="font-style:italic;margin-top:6px">Terbilang: “${E(terbilang(po.total))}”</div></div><b>${RP(po.total)}</b></div>
-      <div class="ttd"><div><div>Dibuat & Diajukan:</div><div class="ok-t" style="margin:6px 0">${po.status !== 'Draft' ? 'VALIDATED - ' + TGL(po.created_at || po.tanggal) : 'DRAFT'}</div><div class="nm">${E(po.dibuat_oleh || '-')}</div><div class="xs mono">Pejabat Pengadaan</div></div>
-        <div class="await"><div>Menyetujui & Mengesahkan:</div>${['Disetujui PPK', 'BAST Parsial', 'BAST Terbit', 'Selesai'].includes(po.status) ? `<div class="ok-t" style="margin:6px 0">${I('check')} DISETUJUI ${TGL(po.tgl_approval)}</div><div class="nm">${E(po.disetujui_oleh)}</div>` : `<div class="mono xs muted" style="margin:6px 0">AWAITING PPK SIGNATURE</div><div class="nm">${E(ppk.nama || st.PPK_NAMA || 'PPK')}</div>`}<div class="xs mono">Pejabat Pembuat Komitmen (PPK)</div>${ppk.nip ? `<div class="xs mono muted">NIP. ${E(ppk.nip)}</div>` : ''}</div></div>
-      <div class="foot"><span>Doc ID: ${E(String(po.id).slice(0, 8).toUpperCase())}</span><span>Status: ${E(po.status)}</span><span>Lembar 1 dari 1</span></div></div>`;
-  }
+  /** Wadah pratinjau; diisi oleh Docs.hydrate(el) setelah halaman dirender */
+  poPaper(po) { return `<div class="doc-embed" data-jenis="PO" data-id="${E(po.id)}"><div class="skel" style="height:420px"></div></div>`; },
+  hydrate(root) { (root || document).querySelectorAll('.doc-embed:not([data-done])').forEach(el => { el.dataset.done = '1'; Doc.embed(el, el.dataset.jenis, el.dataset.id); }); }
 };
 function terbilang(n) {
   n = Math.floor(Math.abs(Number(n) || 0));
@@ -112,7 +98,7 @@ function internalDash() {
   }) + `<div class="grid g4">
     ${kpi({ lbl: 'Total Pengadaan Aktif', val: RP(total), ico: 'wallet', foot: `${I('trend')} ${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% vs bulan lalu`, fc: growth < 0 ? 'muted' : '' })}
     ${kpi({ lbl: 'PO Menunggu Approval', val: pending.length + ' Dokumen', ico: 'clipcheck', ic: 'r', foot: urgent ? `<b>!</b> ${urgent} urgent membutuhkan tindakan PPK` : 'Tidak ada yang mendesak', fc: urgent ? 'warn' : 'muted' })}
-    ${kpi({ lbl: 'BAST Selesai Bulan Ini', val: bastMonth.length + ' Dokumen', ico: 'shield', ic: 'g', foot: `${I('check')} ${bastMonth.length ? Math.round(fullOk / bastMonth.length * 100) : 100}% verifikasi fisik lengkap` })}
+    ${kpi({ lbl: 'BAPB Disahkan Bulan Ini', val: bastMonth.length + ' Dokumen', ico: 'shield', ic: 'g', foot: `${I('check')} ${bastMonth.length ? Math.round(fullOk / bastMonth.length * 100) : 100}% verifikasi fisik lengkap` })}
     ${kpi({ lbl: 'Tagihan Siap Dibayar', val: RP(siap.reduce((a, i) => a + i.netto, 0)), ico: 'money', ic: 'g', foot: `${I('share')} ${new Set(siap.map(i => i.vendor_id)).size} vendor terverifikasi`, fc: 'muted' })}
   </div>
   <div class="grid g-2-1 mt">
@@ -138,7 +124,7 @@ function actionItems() {
     S.po.filter(p => p.status === 'Menunggu Approval').sort((a, b) => (b.prioritas === 'Urgent') - (a.prioritas === 'Urgent')).forEach(p => out.push({ tag: p.prioritas === 'Urgent' ? 'URGENT PPK' : 'APPROVAL PO', cls: p.prioritas === 'Urgent' ? 'pl-red' : 'pl-blue', when: TGL(p.tanggal), title: p.paket || p.kategori || p.nomor_po, desc: p.nomor_po + ' · ' + vName(p.vendor_id), val: RP(p.total), btn: 'Tinjau PO', href: '#/approval/' + p.id }));
     S.invoice.filter(i => i.status === 'Menunggu Verifikasi').forEach(i => out.push({ tag: 'VERIFIKASI INVOICE', cls: 'pl-amber', when: 'Jatuh tempo ' + TGL(i.jatuh_tempo), title: i.nomor_invoice, desc: vName(i.vendor_id), val: RP(i.netto), btn: 'Verifikasi', href: '#/approval/inv:' + i.id }));
   }
-  if (r === 'PPTK' || r === 'ADMIN') S.po.filter(p => ['Disetujui PPK', 'BAST Parsial'].includes(p.status)).forEach(p => out.push({ tag: p.status === 'BAST Parsial' ? 'SISA PENERIMAAN' : 'SIAP DIPERIKSA', cls: 'pl-green', when: p.tgl_kirim ? 'Kirim ' + TGL(p.tgl_kirim) : TGL(p.tanggal), title: 'BAST ' + (p.paket || p.kategori || ''), desc: p.nomor_po + ' · ' + vName(p.vendor_id), val: RP(p.total), btn: 'Input BAST', btnCls: 'btn-success', href: '#/bast-form/' + p.id }));
+  if (r === 'PPTK' || r === 'ADMIN') S.po.filter(p => ['Disetujui PPK', 'BAST Parsial'].includes(p.status)).forEach(p => out.push({ tag: p.status === 'BAST Parsial' ? 'SISA PENERIMAAN' : 'SIAP DITERIMA', cls: 'pl-green', when: p.tgl_kirim ? 'Kirim ' + TGL(p.tgl_kirim) : TGL(p.tanggal), title: 'BAPB ' + (p.paket || p.kategori || ''), desc: p.nomor_po + ' · ' + vName(p.vendor_id), val: RP(p.total), btn: 'Input BAPB', btnCls: 'btn-success', href: '#/bast-form/' + p.id }));
   if (r === 'PENGADAAN' || r === 'ADMIN') {
     S.po.filter(p => p.status === 'Ditolak').forEach(p => out.push({ tag: 'REVISI PO', cls: 'pl-red', when: TGL(p.tgl_approval), title: p.nomor_po, desc: 'Catatan PPK: ' + (p.catatan_ppk || '-'), val: RP(p.total), btn: 'Perbaiki', href: '#/po-form/' + p.id }));
     const billed = new Set(S.invoice.filter(i => i.status !== 'Ditolak').map(i => i.bast_id));
@@ -155,7 +141,7 @@ Act['dash.export'] = () => {
   const m = UI.BULAN.map((b, i) => {
     const p = S.po.filter(x => ACTIVE_PO(x) && inYear(x.tanggal) && monthOf(x.tanggal) === i);
     const inv = S.invoice.filter(x => x.status === 'Dibayar' && inYear(x.tgl_bayar) && monthOf(x.tgl_bayar) === i);
-    return { Bulan: b, 'Jumlah PO': p.length, 'Nilai PO (Rp)': p.reduce((a, x) => a + x.total, 0), 'BAST Ditandatangani': S.bast.filter(x => x.status === 'Ditandatangani' && inYear(x.tanggal) && monthOf(x.tanggal) === i).length, 'Pembayaran (Rp)': inv.reduce((a, x) => a + x.netto, 0) };
+    return { Bulan: b, 'Jumlah PO': p.length, 'Nilai PO (Rp)': p.reduce((a, x) => a + x.total, 0), 'BAPB Disahkan': S.bast.filter(x => x.status === 'Ditandatangani' && inYear(x.tanggal) && monthOf(x.tanggal) === i).length, 'Pembayaran (Rp)': inv.reduce((a, x) => a + x.netto, 0) };
   });
   UI.exportExcel('Rekap_Bulanan_Pengadaan_' + YEAR, { 'Rekap Bulanan': m, 'Daftar PO': S.po.map(poRow) });
 };
@@ -168,7 +154,7 @@ function vendorPortal() {
   const waiting = S.invoice.filter(i => i.status !== 'Dibayar' && i.status !== 'Ditolak');
   const paid = S.invoice.filter(i => i.status === 'Dibayar');
   return pageHead({ eyebrow: `<span class="tag">Portal Rekanan</span> • ${E(v.kode || '')}`, title: E(v.nama || 'Portal Vendor'), sub: 'Pantau status pesanan, serah terima barang, dan pembayaran tagihan Anda secara real-time.', extra: CHIP(v.status) }) +
-    `<div class="grid g4">${kpi({ lbl: 'PO Aktif', val: active.length + ' <small>Pesanan</small>', ico: 'receipt' })}${kpi({ lbl: 'Nilai PO TA ' + YEAR, val: RP(nilai), ico: 'wallet', accent: true })}${kpi({ lbl: 'BAST Diterima', val: S.bast.length + ' <small>Dokumen</small>', ico: 'clipcheck', ic: 'g' })}${kpi({ lbl: 'Tagihan Diproses', val: RP(waiting.reduce((a, i) => a + i.netto, 0)), ico: 'money', ic: 'a', foot: paid.length + ' tagihan sudah dibayar', fc: 'muted' })}</div>
+    `<div class="grid g4">${kpi({ lbl: 'PO Aktif', val: active.length + ' <small>Pesanan</small>', ico: 'receipt' })}${kpi({ lbl: 'Nilai PO TA ' + YEAR, val: RP(nilai), ico: 'wallet', accent: true })}${kpi({ lbl: 'BAPB (Barang Diterima)', val: S.bast.length + ' <small>Dokumen</small>', ico: 'clipcheck', ic: 'g' })}${kpi({ lbl: 'Tagihan Diproses', val: RP(waiting.reduce((a, i) => a + i.netto, 0)), ico: 'money', ic: 'a', foot: paid.length + ' tagihan sudah dibayar', fc: 'muted' })}</div>
     <div class="card pad-0 mt"><div class="card-head" style="padding:18px 20px 0"><div class="ic">${I('receipt')}</div><div style="flex:1"><h3>Status Pesanan Anda</h3><p>Setiap tahap diperbarui otomatis oleh sistem RSUD</p></div></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Nomor PO</th><th>Paket / Unit</th><th>Tanggal</th><th class="num">Nilai</th><th style="min-width:340px">Progres</th><th></th></tr></thead><tbody>
     ${S.po.map(p => `<tr><td class="mono">${E(p.nomor_po)}</td><td>${E(p.paket || p.kategori || '-')}<div class="sub">${E(p.unit || '')}</div></td><td class="mono small">${TGL(p.tanggal)}</td><td class="num">${RP(p.total)}</td><td>${steps(p)}</td><td><a class="btn btn-soft btn-sm" href="#/po/${p.id}">Detail</a></td></tr>`).join('') || `<tr><td colspan="6">${UI.empty('Belum ada pesanan')}</td></tr>`}
@@ -299,6 +285,7 @@ function vendorDrawer(id, onClose) {
     body: `<div class="row wrap mb">${CHIP(v.status)}${v.izin_exp ? `<span class="chip ${UI.daysTo(v.izin_exp) <= 30 ? 'st-red' : 'st-gray'} nodot">Izin s.d. ${TGL(v.izin_exp)}</span>` : ''}</div>
       <div class="grid g2" style="gap:14px">${kv('BENTUK USAHA', v.bentuk_usaha)}${kv('NIB', v.nib, 1)}${kv('NPWP', v.npwp, 1)}${kv('ID LKPP', v.lkpp_id, 1)}<div class="span-all">${kv('ALAMAT', [v.alamat, v.kota, v.provinsi, v.kode_pos].filter(Boolean).join(', '))}</div>${kv('PIC', (v.pic_nama || '') + (v.pic_jabatan ? ' — ' + v.pic_jabatan : ''))}${kv('TELEPON', v.telepon, 1)}${kv('EMAIL', v.email, 1)}${kv('BANK', v.bank)}${kv('NO. REKENING', v.no_rekening, 1)}${kv('NAMA REKENING', v.nama_rekening)}</div>
       <h3 class="mt">Dokumen Legalitas</h3>${vendorDocs(v)}
+      <div class="file-row">${I('pen', 'fi')}<div style="flex:1"><div class="small">Tanda tangan pimpinan (spesimen)</div><div class="xs muted">${v.ttd_file_id ? 'Tersimpan — dibubuhkan pada Invoice & BASTP' : 'Belum ada — dokumen memakai TTD basah'}</div></div>${v.ttd_file_id ? `<span class="chip st-green nodot">Ada</span>` : '<span class="chip st-gray nodot">Kosong</span>'}</div>
       <h3 class="mt">Akun Portal</h3>${acc.map(u => `<div class="file-row">${I('user', 'fi')}<div style="flex:1"><div class="small">${E(u.email)}</div><div class="xs muted">${E(u.status)} · login terakhir ${u.last_login ? UI.ago(u.last_login) : '-'}</div></div></div>`).join('') || '<div class="small muted">Belum ada akun portal (isi email vendor untuk membuat otomatis).</div>'}
       <h3 class="mt">Riwayat PO (${pos.length})</h3><div class="tbl-wrap"><table class="tbl"><tbody>${pos.slice(0, 10).map(p => `<tr class="clickable" data-act="go" data-href="po/${p.id}"><td class="mono small">${E(p.nomor_po)}</td><td class="small">${TGL(p.tanggal)}</td><td class="num small">${RP(p.total)}</td><td>${CHIP(p.status)}</td></tr>`).join('') || `<tr><td>${UI.empty('Belum ada transaksi')}</td></tr>`}</tbody></table></div>`,
     foot: can('vendorEdit') ? `<select class="select" style="width:auto" id="vd-st">${UI.opt(VSTAT, v.status)}</select><button class="btn btn-outline" id="vd-st-ok">Ubah Status</button><span class="spacer"></span><button class="btn btn-outline-danger" id="vd-del">${I('trash')}</button><a class="btn" href="#/vendor-form/${v.id}">${I('edit')} Edit</a>` : ''
@@ -327,7 +314,8 @@ function vendorProfile(v) {
       ${[['KODE REKANAN', v.kode], ['BENTUK USAHA', v.bentuk_usaha], ['NIB', v.nib], ['NPWP', v.npwp], ['KATEGORI', v.kategori], ['ID LKPP', v.lkpp_id], ['PIC', v.pic_nama], ['TELEPON', v.telepon], ['EMAIL', v.email], ['MASA BERLAKU IZIN', TGL(v.izin_exp)]].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div>${E(x || '-')}</div></div>`).join('')}
       <div class="span-all"><div class="mono xs muted">ALAMAT</div>${E([v.alamat, v.kota, v.provinsi].filter(Boolean).join(', '))}</div></div></div>
     <div class="card"><div class="card-head"><div class="ic">${I('bank')}</div><h3>Rekening Pembayaran</h3></div><div class="grid g2" style="gap:14px">${[['BANK', v.bank], ['NO. REKENING', v.no_rekening], ['NAMA REKENING', v.nama_rekening]].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="mono">${E(x || '-')}</div></div>`).join('')}</div>
-      <h3 class="mt">Dokumen Legalitas</h3>${vendorDocs(v)}</div></div>`;
+      <h3 class="mt">Dokumen Legalitas</h3>${vendorDocs(v)}
+      <h3 class="mt">Tanda Tangan Pimpinan</h3><div class="file-row">${I('pen', 'fi')}<span class="small" style="flex:1">${v.ttd_file_id ? 'Spesimen TTD tersimpan' : 'Belum ada spesimen TTD'}</span><button class="btn btn-soft btn-sm" data-act="me.ttd">${v.ttd_file_id ? 'Ubah' : 'Unggah'} TTD</button></div></div></div>`;
 }
 
 /* ---------- FORM TAMBAH / EDIT VENDOR ---------- */
@@ -360,9 +348,12 @@ Pages['vendor-form'] = {
           <div class="mono xs muted mt">BERKAS TERLAMPIR (<span id="vf-cnt">${d.dokumen.length}</span> DOKUMEN)</div><div id="vf-docs"></div>
           <label class="check act-item mt"><input type="checkbox" name="pernyataan" ${v ? 'checked' : ''}><span class="small">Saya menyatakan dengan sungguh-sungguh bahwa seluruh berkas legalitas dan rincian rekanan ini sah, mutakhir, serta dapat dipertanggungjawabkan di hadapan hukum sesuai ketentuan pengadaan BLUD ${E(S.settings.RS_NAMA || '')}.</span></label>
         </div>
+        <div class="card"><div class="card-head"><div class="ic">${I('pen')}</div><div style="flex:1"><h3>5. Tanda Tangan Pimpinan</h3><p>Dibubuhkan otomatis pada Invoice &amp; BAST Hasil Pekerjaan (opsional — bisa juga TTD basah)</p></div></div>
+          <div id="vf-ttd"></div></div>
       </div></form>
       <div class="sticky-bar"><span class="row small">${I('shield')} Audit Trail: <span class="code-pill">GAS ID: LOG-VND-${YEAR}</span></span><span class="small muted" id="vf-draft"></span><span class="spacer"></span><a class="btn btn-outline" href="#/vendor" data-act="vf.cancel">Batal</a><button class="btn" data-act="vf.save">${I('check')} ${v ? 'Simpan Perubahan' : 'Simpan Rekanan Baru'}</button></div>`;
     renderVfDocs(el);
+    el._ttd = UI.ttdPicker(el.querySelector('#vf-ttd'), { spesimen: d.ttd_file_id || '', modes: d.ttd_file_id ? ['spesimen', 'pad', 'upload'] : ['kosong', 'pad', 'upload'], value: d.ttd_file_id ? 'spesimen' : 'kosong' });
     const form = el.querySelector('#vform');
     const inp = el.querySelector('#vf-files');
     inp.onchange = () => { vfUpload(el, [...inp.files]); inp.value = ''; };
@@ -410,6 +401,7 @@ Act['vf.save'] = el => {
   if (d.dokumen.some(z => !z.fileId && !z.err)) { UI.toast('Tunggu hingga semua berkas selesai diunggah', 'warn'); return; }
   delete x.pernyataan;
   const existed = !!Store.vendor(d.id);
+  const ttd = sec._ttd ? sec._ttd.get() : { mode: 'kosong' };
   const payload = Object.assign({}, existed ? Store.vendor(d.id) : {}, x, { id: d.id, dokumen: d.dokumen.filter(z => z.fileId).map(({ name, fileId, size, jenis }) => ({ name, fileId, size, jenis })) });
   const local = Object.assign({ kode: 'VND-…', status: 'Menunggu Verifikasi', created_at: new Date().toISOString() }, payload);
   API.mutate({
@@ -419,6 +411,7 @@ Act['vf.save'] = el => {
     onSuccess: r => {
       Store.upsert('vendors', r.data.vendor);
       if (r.data.user) Store.upsert('users', r.data.user);
+      if (ttd.mode === 'gambar') API.call('saveTtd', { target: 'vendor', id: r.data.vendor.id, base64: ttd.base64 }).then(t => { DocImg.put(t.data.file_id, ttd.base64); Store.upsert('vendors', { id: r.data.vendor.id, ttd_file_id: t.data.file_id }); UI.toast('TTD pimpinan tersimpan', 'ok'); }).catch(e => UI.toast('TTD gagal disimpan: ' + e.message, 'err'));
       if (r.data.account) UI.modal({ title: 'Akun Portal Rekanan dibuat', body: `<p>Kredensial telah dikirim ke email rekanan. Simpan juga informasi berikut untuk diserahkan bila diperlukan:</p><div class="act-item"><div class="mono small">Email: <b>${E(r.data.account.email)}</b></div><div class="mono small">Password sementara: <b>${E(r.data.account.password)}</b></div></div><p class="small muted">Rekanan wajib mengganti password saat login pertama.</p>`, foot: '<button class="btn" data-close>Mengerti</button>' });
     }
   });
@@ -430,7 +423,7 @@ Act['vf.save'] = el => {
 /* =====================================================================
    PURCHASE ORDER
    ===================================================================== */
-const PO_TABS = [{ id: '', l: 'Semua' }, { id: 'Draft', l: 'Draft' }, { id: 'Menunggu Approval', l: 'Menunggu Approval' }, { id: 'Disetujui PPK', l: 'Disetujui' }, { id: 'BAST', l: 'BAST' }, { id: 'Selesai', l: 'Selesai' }, { id: 'Ditolak', l: 'Ditolak / Revisi' }];
+const PO_TABS = [{ id: '', l: 'Semua' }, { id: 'Draft', l: 'Draft' }, { id: 'Menunggu Approval', l: 'Menunggu Approval' }, { id: 'Disetujui PPK', l: 'Disetujui' }, { id: 'BAST', l: 'Penerimaan' }, { id: 'Selesai', l: 'Selesai' }, { id: 'Ditolak', l: 'Ditolak / Revisi' }];
 Pages.po = {
   title: 'Purchase Order', deps: ['po', 'poDetail', 'vendors', 'bast', 'invoice', 'barang'],
   render(el, param) {
@@ -478,29 +471,27 @@ Act['po.export'] = () => UI.exportExcel('Daftar_PO_' + UI.iso(), { PO: poFiltere
 function poDrawer(id, onClose) {
   const p = Store.po(id); if (!p) return;
   const items = Store.poItems(id), basts = Store.bastOfPO(id), invs = Store.invOfPO(id);
-  const tpl = S.templates.find(t => t.jenis === 'PO' && t.status === 'Aktif');
   const approved = ['Disetujui PPK', 'BAST Parsial', 'BAST Terbit', 'Selesai'].includes(p.status);
   const m = UI.modal({
     drawer: true, onClose, title: `<span class="mono">${E(p.nomor_po || '(menunggu nomor)')}</span>`, sub: E(vName(p.vendor_id)) + ' · ' + TGL(p.tanggal, 1),
     body: `<div class="row wrap">${CHIP(p.status)}${p.prioritas === 'Urgent' ? '<span class="chip st-red nodot">URGENT</span>' : ''}<span class="spacer"></span><b class="num" style="font-size:18px;color:var(--primary-deep)">${RP(p.total)}</b></div>${steps(p)}
       ${p.status === 'Ditolak' && p.catatan_ppk ? `<div class="info-box mt" style="background:var(--danger-tint);color:var(--danger-text)">${I('alert')}<span><b>Catatan PPK:</b> ${E(p.catatan_ppk)}</span></div>` : ''}
-      <div class="grid g2 mt" style="gap:12px">${[['UNIT PEMESAN', p.unit], ['KATEGORI', p.kategori], ['SUMBER DANA', p.sumber_dana], ['PAKET', p.paket], ['RUJUKAN E-KATALOG', p.rujukan], ['TGL KIRIM', TGL(p.tgl_kirim)], ['DIBUAT OLEH', p.dibuat_oleh], ['DISETUJUI', p.disetujui_oleh ? p.disetujui_oleh + ' · ' + TGL(p.tgl_approval) : '-']].map(([k, v]) => `<div><div class="mono xs muted">${k}</div><div class="small">${E(v || '-')}</div></div>`).join('')}</div>
+      <div class="grid g2 mt" style="gap:12px">${[['UNIT PEMESAN', p.unit], ['KATEGORI', p.kategori], ['KEGIATAN', p.kegiatan], ['SUB KEGIATAN', p.sub_kegiatan], ['PEKERJAAN / PAKET', p.paket], ['KODE REKENING', p.kode_rekening], ['SUMBER DANA', p.sumber_dana], ['RUJUKAN E-KATALOG', p.rujukan], ['TGL BARANG DITERIMA', TGL(p.tgl_kirim)], ['WAKTU PENYELESAIAN', p.waktu_penyelesaian ? p.waktu_penyelesaian + ' hari kalender' : ''], ['DIBUAT OLEH', p.dibuat_oleh], ['DISETUJUI', p.disetujui_oleh ? p.disetujui_oleh + ' · ' + TGL(p.tgl_approval) : '-']].map(([k, v]) => `<div><div class="mono xs muted">${k}</div><div class="small">${E(v || '-')}</div></div>`).join('')}</div>
       ${p.keterangan ? `<div class="small mt-s"><span class="mono xs muted">KETERANGAN</span><br>${E(p.keterangan)}</div>` : ''}
       <h3 class="mt">Rincian Item (${items.length})</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Uraian</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Jumlah</th></tr></thead><tbody>${items.map(d => `<tr><td>${E(d.nama)}<div class="sub">${E(d.spesifikasi || '')}</div></td><td class="num">${UI.num(d.qty)} ${E(d.satuan)}</td><td class="num">${UI.num(d.harga)}</td><td class="num">${UI.num(d.subtotal)}</td></tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="3" class="right">Subtotal</td><td class="num">${UI.num(p.subtotal)}</td></tr><tr><td colspan="3" class="right">PPN</td><td class="num">${UI.num(p.ppn)}</td></tr><tr><td colspan="3" class="right">TOTAL</td><td class="num">${RP(p.total)}</td></tr></tfoot></table></div>
-      ${basts.length ? `<h3 class="mt">BAST</h3>${basts.map(b => `<a class="file-row" style="text-decoration:none;color:inherit" href="#/bast/${b.id}">${I('clipcheck', 'fi')}<div style="flex:1"><div class="mono small">${E(b.nomor_bast)}</div><div class="xs muted">${TGL(b.tanggal)} · ${E(b.kesimpulan || '')}</div></div>${CHIP(b.status)}</a>`).join('')}` : ''}
+      ${basts.length ? `<h3 class="mt">BAPB (Penerimaan)</h3>${basts.map(b => `<a class="file-row" style="text-decoration:none;color:inherit" href="#/bast/${b.id}">${I('clipcheck', 'fi')}<div style="flex:1"><div class="mono small">${E(b.nomor_bast)}</div><div class="xs muted">${TGL(b.tanggal)} · ${E(b.kesimpulan || '')}</div></div>${CHIP(b.status)}</a>`).join('')}` : ''}
       ${invs.length ? `<h3 class="mt">Invoice</h3>${invs.map(i => `<a class="file-row" style="text-decoration:none;color:inherit" href="#/invoice/${i.id}">${I('money', 'fi')}<div style="flex:1"><div class="mono small">${E(i.nomor_invoice)}</div><div class="xs muted">Netto ${RP(i.netto)}</div></div>${CHIP(i.status)}</a>`).join('')}` : ''}
-      ${p.doc_file_id ? `<h3 class="mt">Dokumen Resmi</h3><a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(p.doc_file_id)}">${I('pdf', 'fi')}<div style="flex:1" class="mono small">PO_${E(p.nomor_po)}.pdf</div>${I('ext')}</a>` : ''}`,
-    foot: `<button class="btn btn-outline" data-act="po.print" data-id="${p.id}">${I('print')} Cetak</button>
-      ${can('genDoc') && tpl && approved ? `<button class="btn btn-outline" data-act="doc.gen" data-jenis="PO" data-id="${p.id}">${I('doc')} Generate Dokumen</button>` : ''}<span class="spacer"></span>
+      ${p.doc_file_id ? `<h3 class="mt">Dokumen Resmi</h3><a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(p.doc_file_id)}">${I('pdf', 'fi')}<div style="flex:1" class="mono small">SP_${E(p.nomor_po)}.pdf</div>${I('ext')}</a>` : ''}`,
+    foot: `<button class="btn ${approved ? '' : 'btn-outline'}" data-act="po.print" data-id="${p.id}">${I('print')} Cetak SP / PDF</button><span class="spacer"></span>
       ${can('poEdit') && p.status === 'Draft' ? `<button class="btn btn-outline-danger" data-act="po.del" data-id="${p.id}">${I('trash')}</button>` : ''}
       ${can('poEdit') && ['Draft', 'Ditolak'].includes(p.status) ? `<a class="btn btn-outline" href="#/po-form/${p.id}">${I('edit')} Edit</a><button class="btn" data-act="po.submitQuick" data-id="${p.id}">Ajukan ke PPK</button>` : ''}
       ${can('poApprove') && p.status === 'Menunggu Approval' ? `<a class="btn btn-success" href="#/approval/${p.id}">${I('shield')} Tinjau & Setujui</a>` : ''}
-      ${can('bastEdit') && ['Disetujui PPK', 'BAST Parsial'].includes(p.status) ? `<a class="btn btn-success" href="#/bast-form/${p.id}">${I('clipcheck')} Input BAST</a>` : ''}`
+      ${can('bastEdit') && ['Disetujui PPK', 'BAST Parsial'].includes(p.status) ? `<a class="btn btn-success" href="#/bast-form/${p.id}">${I('clipcheck')} Input BAPB</a>` : ''}`
   });
   m.el.addEventListener('click', e => { if (e.target.closest('a[href^="#/"],[data-act="po.del"],[data-act="po.submitQuick"]')) m.close(); });
 }
-Act['po.print'] = el => { const p = Store.po(el.dataset.id); printHTML(Docs.poPaper(p, { watermark: p.status === 'Menunggu Approval' ? 'UNTUK APPROVAL' : p.status === 'Draft' ? 'DRAFT' : '' }), p.nomor_po); };
+Act['po.print'] = el => Doc.open('PO', el.dataset.id);
 Act['po.del'] = async el => {
   const p = Store.po(el.dataset.id);
   if (!await UI.confirm('Hapus draft PO?', `Draft <b>${E(p.nomor_po)}</b> akan dihapus permanen.`, { danger: true, ok: 'Hapus' })) return;
@@ -526,10 +517,10 @@ Pages['po-form'] = {
     let d;
     if (ex) d = { ...ex, items: Store.poItems(ex.id).map(x => ({ ...x })) };
     else { try { d = JSON.parse(localStorage.getItem('vms_draft_po') || 'null'); } catch (e) { } }
-    d = d || { id: UI.uid(), tanggal: UI.iso(), prioritas: 'Normal', sumber_dana: 'APBD-BLUD ' + YEAR, items: [{ id: UI.uid(), nama: '', qty: 1, satuan: '', harga: 0 }] };
+    d = d || { id: UI.uid(), tanggal: UI.iso(), prioritas: 'Normal', sumber_dana: 'APBD-BLUD ' + YEAR, kegiatan: S.settings.DEFAULT_KEGIATAN || '', sub_kegiatan: S.settings.DEFAULT_SUB_KEGIATAN || '', waktu_penyelesaian: Number(S.settings.DEFAULT_WAKTU) || 30, items: [{ id: UI.uid(), nama: '', qty: 1, satuan: '', harga: 0 }] };
     el._po = d;
     const vopts = S.vendors.filter(v => v.status !== 'Nonaktif').map(v => ({ v: v.id, l: v.nama + (v.status !== 'Aktif Terverifikasi' ? ' (' + v.status + ')' : '') }));
-    const f = (n, l, o = {}) => `<div class="field ${o.full ? 'full' : ''}"><label>${l}${o.req ? ' <span class="req">*</span>' : ''}</label>${o.select ? `<select class="select" name="${n}">${UI.opt(o.select, d[n], o.ph)}</select>` : o.textarea ? `<textarea class="textarea" name="${n}" rows="2">${E(d[n] || '')}</textarea>` : `<input class="input ${o.mono ? 'mono' : ''}" name="${n}" type="${o.type || 'text'}" value="${E(d[n] || '')}" placeholder="${E(o.ph || '')}" ${o.list ? `list="${o.list}"` : ''}>`}</div>`;
+    const f = (n, l, o = {}) => `<div class="field ${o.full ? 'full' : ''}"><label>${l}${o.req ? ' <span class="req">*</span>' : ''}</label>${o.select ? `<select class="select" name="${n}">${UI.opt(o.select, d[n], o.ph)}</select>` : o.textarea ? `<textarea class="textarea" name="${n}" rows="2">${E(d[n] || '')}</textarea>` : `<input class="input ${o.mono ? 'mono' : ''}" name="${n}" type="${o.type || 'text'}" value="${E(d[n] == null ? '' : d[n])}" placeholder="${E(o.ph || '')}" ${o.list ? `list="${o.list}"` : ''}>`}</div>`;
     const units = [...new Set(S.po.map(p => p.unit).concat(['Instalasi Farmasi', 'Rawat Inap & ICU', 'Instalasi Bedah Sentral', 'Instalasi Lab Patologi Klinik', 'IGD', 'IPSRS', 'Radiologi']).filter(Boolean))];
     const cats = [...new Set(S.po.map(p => p.kategori).concat(['Obat Kronis & Generik', 'Alat Kesehatan', 'Reagen Laboratorium', 'BMHP', 'Gas Medis', 'Linen', 'Pemeliharaan Alkes']).filter(Boolean))];
     el.innerHTML = `<a href="#/po" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali ke Daftar PO</a>` + pageHead({ eyebrow: `<span class="tag">Pejabat Pengadaan</span> • ${ex ? 'Revisi' : 'PO Baru'}`, title: ex ? 'Edit ' + E(ex.nomor_po) : 'Buat Purchase Order', sub: 'Nomor PO dibuat otomatis oleh sistem. Harga satuan belum termasuk PPN.', extra: ex ? CHIP(ex.status) : '' }) +
@@ -537,8 +528,12 @@ Pages['po-form'] = {
       <form id="poform" autocomplete="off"><div class="card"><div class="card-head"><div class="ic">${I('receipt')}</div><div style="flex:1"><h3>1. Informasi Pesanan</h3><p>Rekanan penyedia dan rujukan pengadaan</p></div></div>
       <div class="grid g3" style="gap:16px">${f('vendor_id', 'Vendor / Penyedia', { req: 1, select: vopts, ph: 'Pilih rekanan…' })}${f('tanggal', 'Tanggal PO', { type: 'date', req: 1 })}${f('prioritas', 'Prioritas', { select: ['Normal', 'Urgent'] })}
       ${f('unit', 'Unit Pemesan', { list: 'dl-unit', req: 1 })}${f('kategori', 'Kategori Belanja', { list: 'dl-kat' })}${f('sumber_dana', 'Sumber Dana', { list: 'dl-dana' })}
-      ${f('paket', 'Nama Paket Pengadaan')}${f('rujukan', 'Rujukan / No. E-Katalog LKPP', { mono: 1 })}${f('tgl_kirim', 'Target Tanggal Kirim', { type: 'date' })}${f('keterangan', 'Keterangan / Syarat Khusus', { full: 1, textarea: 1 })}</div>
-      <datalist id="dl-unit">${units.map(u => `<option value="${E(u)}">`).join('')}</datalist><datalist id="dl-kat">${cats.map(u => `<option value="${E(u)}">`).join('')}</datalist><datalist id="dl-dana">${['APBD-BLUD ' + YEAR, 'DAK Fisik ' + YEAR, 'Pendapatan Fungsional BLUD', 'JKN'].map(u => `<option value="${E(u)}">`).join('')}</datalist></div>
+      ${f('paket', 'Pekerjaan / Nama Paket (tercetak di SP)')}${f('rujukan', 'Rujukan / No. E-Katalog / E-Purchasing', { mono: 1 })}${f('kode_rekening', 'Kode Rekening Belanja', { mono: 1, list: 'dl-rek', ph: '5.1.02.01.001.00038 (Belanja Obat-obatan…)' })}
+      ${f('kegiatan', 'Kegiatan', { list: 'dl-keg' })}${f('sub_kegiatan', 'Sub Kegiatan', { list: 'dl-subkeg' })}${f('waktu_penyelesaian', 'Waktu Penyelesaian (hari kalender)', { type: 'number', mono: 1 })}
+      ${f('tgl_kirim', 'Tanggal Barang Diterima / Selesai', { type: 'date' })}${f('alamat_kirim', 'Alamat Pengiriman (kosong = alamat RS)', { ph: S.settings.RS_NAMA_DOK || '' })}<div class="field"><label>&nbsp;</label><div class="xs muted">Kosongkan tanggal agar dihitung otomatis: tanggal SP + waktu penyelesaian.</div></div>
+      ${f('keterangan', 'Keterangan / Syarat Khusus', { full: 1, textarea: 1 })}</div>
+      <datalist id="dl-unit">${units.map(u => `<option value="${E(u)}">`).join('')}</datalist><datalist id="dl-kat">${cats.map(u => `<option value="${E(u)}">`).join('')}</datalist><datalist id="dl-dana">${['APBD-BLUD ' + YEAR, 'DAK Fisik ' + YEAR, 'Pendapatan Fungsional BLUD', 'JKN'].map(u => `<option value="${E(u)}">`).join('')}</datalist>
+      <datalist id="dl-rek">${[...new Set(S.po.map(p => p.kode_rekening).filter(Boolean))].map(u => `<option value="${E(u)}">`).join('')}</datalist><datalist id="dl-keg">${[...new Set(S.po.map(p => p.kegiatan).concat([S.settings.DEFAULT_KEGIATAN]).filter(Boolean))].map(u => `<option value="${E(u)}">`).join('')}</datalist><datalist id="dl-subkeg">${[...new Set(S.po.map(p => p.sub_kegiatan).concat([S.settings.DEFAULT_SUB_KEGIATAN]).filter(Boolean))].map(u => `<option value="${E(u)}">`).join('')}</datalist></div>
       <div class="card mt"><div class="card-head"><div class="ic">${I('box')}</div><div style="flex:1"><h3>2. Rincian Barang / Jasa</h3><p>Pilih dari master barang (harga HPS terisi otomatis) atau ketik item baru</p></div><button type="button" class="btn btn-soft btn-sm" data-act="pof.add">${I('plus')} Tambah Item</button></div>
       <datalist id="dl-brg">${S.barang.filter(b => b.status !== 'Nonaktif').map(b => `<option value="${E(b.nama)}">${E(b.satuan)} · HPS ${UI.num(b.harga_hps)}</option>`).join('')}</datalist>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th style="width:34px">No</th><th style="min-width:240px">Uraian Barang/Jasa</th><th style="min-width:160px">Spesifikasi / Batch</th><th style="width:100px" class="num">Qty</th><th style="width:100px">Satuan</th><th style="width:150px" class="num">Harga Satuan</th><th class="num" style="width:150px">Jumlah</th><th></th></tr></thead><tbody id="pof-items"></tbody></table></div>
@@ -593,6 +588,8 @@ Act['pof.save'] = el => {
   const bad = items.findIndex(i => !(i.qty > 0)); if (bad > -1) { UI.toast('Qty item #' + (bad + 1) + ' harus > 0', 'err'); return; }
   const rate = Number(S.settings.PPN_RATE || 11), sub = items.reduce((a, i) => a + i.qty * i.harga, 0), ppn = Math.round(sub * rate / 100);
   const existed = Store.po(d.id);
+  d.waktu_penyelesaian = Number(d.waktu_penyelesaian) || 0;
+  if (!d.tgl_kirim && d.waktu_penyelesaian) d.tgl_kirim = DC.addDays(d.tanggal, d.waktu_penyelesaian);
   const rec = { ...(existed || {}), ...d, subtotal: sub, ppn, total: sub + ppn, status: submit ? 'Menunggu Approval' : 'Draft', nomor_po: existed ? existed.nomor_po : '', dibuat_oleh: existed ? existed.dibuat_oleh : S.user.nama, created_at: existed ? existed.created_at : new Date().toISOString() };
   delete rec.items;
   const payload = { ...d, items, submit };
