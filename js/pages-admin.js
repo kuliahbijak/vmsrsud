@@ -14,6 +14,8 @@
    ===================================================================== */
 const JENIS_DOK = [{ v: 'PO', l: 'Surat Pesanan (SP / PO)' }, { v: 'BAPB', l: 'Berita Acara Penerimaan Barang (BAPB)' }, { v: 'BASTP', l: 'BAST Hasil Pekerjaan' }, { v: 'INVOICE', l: 'Invoice / Tagihan' }, { v: 'CUSTOM', l: 'Dokumen Custom Lainnya' }];
 const JENIS_CETAK = ['PO', 'BAPB', 'BASTP', 'INVOICE'];
+/** File Word template bawaan (folder templates/ di frontend) — dipasang ke Google Docs & bisa diunduh */
+const TPL_DOCX = { PO: 'templates/Template_SP_Surat_Pesanan.docx', BAPB: 'templates/Template_BAPB_Surat_Penerimaan_Barang.docx', BASTP: 'templates/Template_BAST_Hasil_Pekerjaan.docx', INVOICE: 'templates/Template_Invoice_Tagihan.docx' };
 const tok = p => '{{' + p + '}}';
 Pages.template = {
   title: 'Kelola Template', roles: ['ADMIN'], deps: ['templates', 'po', 'bast', 'invoice'],
@@ -28,8 +30,9 @@ Pages.template = {
     }) + `<div class="grid g4 tpl-def">${JENIS_CETAK.map(j => { const t = aktif.find(x => DC.normJenis(x.jenis) === j); const custom = t && String(t.is_default) !== '1';
         return `<div class="card"><div class="card-head"><div class="ic">${I('doc')}</div><div style="flex:1;min-width:0"><h3>${E(DOC_LABEL[j] || j)}</h3><p class="ellipsis">${t ? (custom ? 'Desain kustom: ' + E(t.nama) : 'Template bawaan (Google Docs)') : 'Format bawaan (cetak browser)'}</p></div></div>
           <div class="row wrap" style="gap:6px">${t ? `<span class="chip ${custom ? 'st-blue' : 'st-green'} nodot">${custom ? 'Kustom aktif' : 'Docs aktif'}</span>` : '<span class="chip st-gray nodot">Bawaan</span>'}<span class="chip nodot">${S.settings.TTD_MODE === 'basah' ? 'TTD basah' : 'TTD gambar'}</span></div>
-          <div class="row wrap mt" style="gap:6px"><button class="btn btn-outline btn-sm" data-act="tpl.sample" data-j="${j}">${I('eye')} Pratinjau</button>${t ? `<a class="btn btn-ghost btn-sm" href="${E(t.doc_url)}" target="_blank" rel="noopener">${I('ext')} Edit desain</a>` : ''}</div></div>`; }).join('')}</div>
+          <div class="row wrap mt" style="gap:6px"><button class="btn btn-outline btn-sm" data-act="tpl.sample" data-j="${j}">${I('eye')} Pratinjau</button>${t ? `<a class="btn btn-ghost btn-sm" href="${E(t.doc_url)}" target="_blank" rel="noopener">${I('ext')} Edit desain</a>` : ''}<a class="btn btn-ghost btn-sm" href="${TPL_DOCX[j]}" download>${I('down')} .docx</a></div></div>`; }).join('')}</div>
     <div class="info-box mt">${I('info')}<span><b>Alur kustomisasi:</b> klik <b>Pasang Template Bawaan</b> → buka "Edit desain" (Google Docs) → ubah tata letak/teks sesuka hati, pertahankan penanda {{…}} → kembali ke sini, <b>Scan Ulang</b> → simpan. Tombol "PDF dari Template" pada dialog cetak akan memakai desain tersebut. ${last ? 'Scan terakhir ' + UI.ago(last) + '.' : ''}</span></div>
+    ${S.templates.some(t => String(t.is_default) === '1' && t.status === 'Aktif' && !t.hash) ? `<div class="info-box mt" style="background:var(--warn-tint);color:var(--warn-text)">${I('alert')}<span>Format bawaan telah diperbarui (BAPB: tanda tangan tanpa garis · Invoice: tanpa TTD PPK). Template Google Docs bawaan yang terpasang masih versi lama — klik <b>Pasang Template Bawaan</b> untuk memasang versi baru.</span></div>` : ''}
     ${st.guide ? `<div class="card mt" id="tpl-guide">${tplGuide()}</div>` : ''}
     <div class="card mt" id="tpl-panel">${tplPanel(st.draft)}</div>
     <div class="row mt" style="margin-top:28px"><h2 style="flex:1">Template Terdaftar <span class="chip st-blue nodot">${S.templates.length}</span></h2><span class="small muted hide-sm">Scan ulang setelah mengubah Google Docs</span></div>
@@ -39,13 +42,40 @@ Pages.template = {
       <div class="row wrap mt" style="gap:6px"><a class="btn btn-ghost btn-sm" href="${E(t.doc_url)}" target="_blank" rel="noopener">${I('ext')} Google Docs</a><span class="spacer"></span><button class="btn btn-outline btn-sm" data-act="tpl.rescan" data-id="${t.id}">${I('refresh')} Scan Ulang</button><button class="btn btn-sm ${um ? 'btn-danger' : ''}" data-act="tpl.edit" data-id="${t.id}">${I('sliders')} Mapping</button>${t.status !== 'Aktif' ? `<button class="btn btn-soft btn-sm" data-act="tpl.activate" data-id="${t.id}">Aktifkan</button>` : ''}<button class="icon-btn" data-act="tpl.del" data-id="${t.id}" title="Hapus">${I('trash')}</button></div></div>`; }).join('') || `<div class="card span-all">${UI.empty('Belum ada template Google Docs. Dokumen tetap bisa dicetak dengan format bawaan. Klik "Pasang Template Bawaan" untuk mulai mengubah desain.', 'doc')}</div>`}</div>`;
   }
 };
+/** Penanda yang dipakai di tiap format bawaan (dari DOC_TPL — sumber yang sama dengan Google Docs bawaan) */
+function tplUsed() {
+  const lab = {}; Object.keys(DC.CATALOG).forEach(g => Object.keys(DC.CATALOG[g]).forEach(k => lab[k] = DC.CATALOG[g][k]));
+  const ITEM = { NO: 'Nomor urut baris', URAIAN: 'Nama/uraian barang', SPESIFIKASI: 'Spesifikasi', VOLUME: 'Volume / qty', SATUAN: 'Satuan', HARGA: 'Harga satuan', JUMLAH: 'Jumlah (volume × harga)', LOT: 'Lot/batch', EXP: 'Kedaluwarsa', KONDISI: 'Kondisi', QTY_PO: 'Qty pesanan' };
+  const out = {};
+  JENIS_CETAK.forEach(j => {
+    const seen = {}, rows = [];
+    DC.scan(DOC_TPL[j]).forEach(p => {
+      if (p.jenis === '/') return;
+      const tok = p.jenis === '#' ? '{{#' + p.kunci + '}}' : p.jenis === '?' ? '{{?' + p.kunci + '}} … {{/' + p.kunci + '}}' : '{{' + p.kunci + (p.pengubah ? '|' + p.pengubah : '') + '}}';
+      if (seen[tok]) return; seen[tok] = 1;
+      const k = p.kunci, it = k.indexOf('ITEM.') === 0 ? ITEM[k.slice(5)] : '';
+      rows.push({ tok, ket: p.jenis === '#' ? 'Awal baris berulang (1 baris per barang)' : p.jenis === '?' ? 'Bagian tampil hanya bila ' + (lab[k] || k) + ' terisi' : it ? 'Kolom baris barang: ' + it : (lab[k] || DC.label(k)) });
+    });
+    out[j] = rows;
+  });
+  return out;
+}
 function tplGuide() {
-  const cat = DC.CATALOG;
-  return `<div class="card-head"><div class="ic">${I('braces')}</div><div style="flex:1"><h3>Daftar Penanda (Placeholder)</h3><p>Ketik penanda di Google Docs persis seperti di bawah. Format lama <span class="code-pill">[KUNCI]</span> tetap didukung.</p></div><button class="icon-btn" data-act="tpl.guide">${I('x')}</button></div>
-    <div class="grid g2" style="gap:14px">${Object.keys(cat).map(g => `<div><div class="mono xs muted" style="letter-spacing:.06em">${E(g.toUpperCase())}</div><div class="stack mt-s" style="gap:4px">${Object.keys(cat[g]).map(k => `<div class="row small" style="gap:8px;align-items:flex-start"><button class="code-pill" data-act="tpl.copy" data-v="${E(g === 'Baris berulang' ? '{{#ITEM}} … {{/ITEM}}' : '{{' + k + '}}')}" title="Salin">${E(g === 'Baris berulang' ? '{{#ITEM}}' : '{{' + k + '}}')}</button><span class="muted">${E(cat[g][k])}</span></div>`).join('')}</div></div>`).join('')}</div>
+  const cat = DC.CATALOG, used = tplUsed();
+  return `<div class="card-head"><div class="ic">${I('braces')}</div><div style="flex:1"><h3>Referensi Penanda (Placeholder)</h3><p>Ketik penanda di Google Docs persis seperti di bawah. Format lama <span class="code-pill">[KUNCI]</span> tetap didukung.</p></div><a class="btn btn-outline btn-sm" href="templates/Referensi_Penanda_Template.docx" download>${I('down')} Referensi (.docx)</a><button class="btn btn-ghost btn-sm" data-act="tpl.refxls">${I('down')} Excel</button><button class="icon-btn" data-act="tpl.guide">${I('x')}</button></div>
+    <h3>Penanda yang dipakai template bawaan</h3><div class="grid g2 mt-s" style="gap:14px">${JENIS_CETAK.map(j => `<div class="act-item"><b class="small">${E(DOC_LABEL[j])}</b> <span class="mono xs muted">${used[j].length} penanda</span><div class="stack mt-s" style="gap:3px">${used[j].map(r => `<div class="row small" style="gap:8px;align-items:flex-start"><button class="code-pill" data-act="tpl.copy" data-v="${E(r.tok)}" title="Salin">${E(r.tok)}</button><span class="muted">${E(r.ket)}</span></div>`).join('')}</div></div>`).join('')}</div>
+    <h3 class="mt">Semua penanda yang tersedia</h3>
+    <div class="grid g2 mt-s" style="gap:14px">${Object.keys(cat).map(g => `<div><div class="mono xs muted" style="letter-spacing:.06em">${E(g.toUpperCase())}</div><div class="stack mt-s" style="gap:4px">${Object.keys(cat[g]).map(k => `<div class="row small" style="gap:8px;align-items:flex-start"><button class="code-pill" data-act="tpl.copy" data-v="${E(g === 'Baris berulang' ? '{{#ITEM}} … {{/ITEM}}' : '{{' + k + '}}')}" title="Salin">${E(g === 'Baris berulang' ? '{{#ITEM}}' : '{{' + k + '}}')}</button><span class="muted">${E(cat[g][k])}</span></div>`).join('')}</div></div>`).join('')}</div>
     <h3 class="mt">Pengubah format</h3><div class="row wrap mt-s mono xs" style="gap:6px">${['{{TOTAL|rupiah}}', '{{TOTAL|terbilang:rupiah}}', '{{TANGGAL_SP|tanggal}}', '{{NAMA_PPK|kapital}}', '{{NIP_PPK|nip}}', '{{KEGIATAN|bawaan:-}}', '{{TTD_PPK|lebar:120}}', '{{LOGO|lebar:62}}'].map(x => `<span class="tag-mini">${E(x)}</span>`).join('')}</div>
     <p class="small muted mt-s">Baris tabel barang: buat <b>satu baris tabel</b> berisi <span class="code-pill">{{ITEM.NO}}</span> <span class="code-pill">{{ITEM.URAIAN}}</span> <span class="code-pill">{{ITEM.VOLUME}}</span> … — baris diulang otomatis untuk setiap barang. Bagian bersyarat: <span class="code-pill">{{?NO_FAKTUR}} … {{/NO_FAKTUR}}</span> hanya tampil bila ada nilainya.</p>`;
 }
+Act['tpl.refxls'] = () => {
+  const used = tplUsed(), sheets = {};
+  JENIS_CETAK.forEach(j => sheets[j] = used[j].map(r => ({ Penanda: r.tok, Keterangan: r.ket })));
+  const all = []; Object.keys(DC.CATALOG).forEach(g => Object.keys(DC.CATALOG[g]).forEach(k => all.push({ Grup: g, Penanda: '{{' + k + '}}', Keterangan: DC.CATALOG[g][k] })));
+  sheets['Semua Penanda'] = all;
+  UI.exportExcel('Referensi_Penanda_Template_VMS', sheets);
+};
 function srcOptions(sel) {
   const src = S.sources || {};
   return Object.keys(src).map(g => `<optgroup label="${E(g)}">${Object.keys(src[g]).map(k => `<option value="${E(k)}" ${k === sel ? 'selected' : ''}>${E(src[g][k])} — ${E(k)}</option>`).join('')}</optgroup>`).join('');
@@ -98,10 +128,12 @@ function sampleRef(j) {
 Act['tpl.sample'] = el => { const id = sampleRef(el.dataset.j); if (!id) { UI.toast('Belum ada data ' + (DOC_LABEL[el.dataset.j] || el.dataset.j) + ' untuk contoh pratinjau', 'warn'); return; } Doc.open(el.dataset.j, id); };
 Act['tpl.install'] = async el => {
   const ada = S.templates.filter(t => String(t.is_default) === '1').length;
-  if (!await UI.confirm('Pasang template bawaan?', `Format bawaan SP, BAPB, BAST Hasil Pekerjaan, dan Invoice akan disalin menjadi <b>4 file Google Docs</b> di folder <b>Template_Docs</b> Drive Anda, lalu diaktifkan (kecuali jenis yang sudah memakai template kustom).${ada ? '<br><br><span class="muted">Sudah ada ' + ada + ' template bawaan terpasang — salinan baru akan dibuat.</span>' : ''}`, { ok: 'Pasang' })) return;
+  if (!await UI.confirm('Pasang template bawaan?', `Format bawaan SP, BAPB, BAST Hasil Pekerjaan, dan Invoice akan disalin menjadi <b>4 file Google Docs</b> di folder <b>Template_Docs</b> Drive Anda, lalu diaktifkan (kecuali jenis yang sudah memakai template kustom).${ada ? '<br><br><span class="muted">Sudah ada ' + ada + ' template bawaan terpasang — salinan baru dibuat dan template bawaan lama dinonaktifkan (file lama tidak dihapus).</span>' : ''}`, { ok: 'Pasang' })) return;
   UI.busy(el, true);
   try {
-    const r = await API.call('installDefaultTemplates', { templates: Doc.installPayload(), logo: await Doc.logoDataUrl(), aktifkan: true }, { timeout: 240000 });
+    const docx = {};
+    await Promise.all(JENIS_CETAK.map(async j => { try { const f = await fetch(TPL_DOCX[j], { cache: 'no-store' }); if (f.ok) docx[j] = await UI.readB64(await f.blob()); } catch (e) { } }));
+    const r = await API.call('installDefaultTemplates', { docx, logo: await Doc.logoDataUrl(), aktifkan: true }, { timeout: 300000 });
     S.templates = r.data.templates; if (r.data.settings) S.settings = r.data.settings; Store.upsertMany('templates', []);
     UI.toast(r.message, 'ok', 5000); App.refreshCurrent();
   } catch (e) { UI.toast('Gagal memasang: ' + e.message, 'err', 8000); }
@@ -374,7 +406,7 @@ function setDokumen() {
       <div class="card"><div class="card-head"><div class="ic">${I('pen')}</div><div style="flex:1"><h3>Tanda Tangan & Kertas</h3><p>Ganti teks "VALIDATED/DISETUJUI" dengan TTD gambar atau kosong untuk TTD basah</p></div></div>
         <div class="form-grid">${sel('TTD_MODE', 'Mode tanda tangan', [{ v: 'gambar', l: 'TTD gambar (PNG spesimen) otomatis' }, { v: 'basah', l: 'Dikosongkan — TTD basah setelah cetak' }], 'Tetap bisa diubah per dokumen saat mencetak')}${sel('KERTAS', 'Ukuran kertas', [{ v: 'F4', l: 'F4 / Folio (215 × 330 mm)' }, { v: 'A4', l: 'A4 (210 × 297 mm)' }])}</div></div>
       <div class="card"><div class="card-head"><div class="ic">${I('braces')}</div><div style="flex:1"><h3>Format Penomoran</h3><p>Token: <span class="code-pill">{URUT}</span> <span class="code-pill">{URUT4}</span> <span class="code-pill">{TAHUN}</span> <span class="code-pill">{BULAN}</span> <span class="code-pill">{BULAN_ROMAWI}</span></p></div></div>
-        <div class="form-grid">${[['FMT_NOMOR_PO', 'Nomor Surat Pesanan'], ['FMT_NOMOR_BAPB', 'Nomor BAPB'], ['FMT_NOMOR_BASTP', 'Nomor BAST Hasil Pekerjaan'], ['FMT_NOMOR_INV', 'Nomor Invoice']].map(([k, l]) => f(k, l, 'Contoh: ' + E(fmtNomorPreview(s[k])), { full: 1, mono: 1, fmt: 1 })).join('')}</div></div>
+        <div class="form-grid">${sel('MODE_NOMOR_PO', 'Penomoran Surat Pesanan', [{ v: 'otomatis', l: 'Otomatis (boleh diisi manual)' }, { v: 'manual', l: 'Manual (wajib diisi saat membuat SP)' }])}${sel('MODE_NOMOR_BAPB', 'Penomoran BAPB & BAST', [{ v: 'otomatis', l: 'Otomatis (boleh diisi manual)' }, { v: 'manual', l: 'Manual (wajib diisi)' }])}<div class="field full"><span class="help">Nomor yang sudah terbit tetap bisa diubah lewat tombol <b>Edit Nomor</b> di detail SP / BAPB.</span></div>${[['FMT_NOMOR_PO', 'Nomor Surat Pesanan'], ['FMT_NOMOR_BAPB', 'Nomor BAPB'], ['FMT_NOMOR_BASTP', 'Nomor BAST Hasil Pekerjaan'], ['FMT_NOMOR_INV', 'Nomor Invoice']].map(([k, l]) => f(k, l, 'Contoh: ' + E(fmtNomorPreview(s[k])), { full: 1, mono: 1, fmt: 1 })).join('')}</div></div>
       <div class="card"><div class="card-head"><div class="ic">${I('file')}</div><h3>Isian Bawaan Surat Pesanan</h3></div>
         <div class="form-grid">${f('DEFAULT_KEGIATAN', 'Kegiatan', '', { full: 1 })}${f('DEFAULT_SUB_KEGIATAN', 'Sub kegiatan', '', { full: 1 })}${f('DEFAULT_WAKTU', 'Waktu penyelesaian (hari)', '', { mono: 1 })}</div></div>
     </div></form>

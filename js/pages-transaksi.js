@@ -164,6 +164,7 @@ function bastDrawer(id, onClose) {
     drawer: true, onClose, title: `<span class="mono">${E(b.nomor_bast || 'BAPB')}</span>`, sub: 'SP ' + E(p.nomor_po || '-') + ' · ' + E(vName(b.vendor_id)),
     body: `<div class="row wrap">${CHIP(b.status)}<span class="chip st-blue nodot">${E(b.kesimpulan || '-')}</span>${b.nomor_bastp ? `<span class="chip nodot mono">BASTP ${E(b.nomor_bastp)}</span>` : ''}</div>
       ${signed ? `<div class="doc-actions mt"><button class="btn" data-act="doc.open" data-jenis="BAPB" data-id="${b.id}">${I('print')} Cetak BAPB / PDF</button><button class="btn btn-outline" data-act="doc.open" data-jenis="BASTP" data-id="${b.id}">${I('print')} Cetak BAST Hasil Pekerjaan</button></div>` : `<div class="info-box mt">${I('info')}<span>Draft — dokumen dapat dicetak setelah BAPB disahkan. <button class="btn btn-ghost btn-xs" data-act="doc.open" data-jenis="BAPB" data-id="${b.id}">Pratinjau</button></span></div>`}
+      ${can('bastEdit') ? `<div class="row wrap mt-s" style="gap:6px"><button class="btn btn-ghost btn-sm" data-act="nomor.edit" data-jenis="BAPB" data-id="${b.id}">${I('edit')} Edit Nomor BAPB</button>${signed || b.nomor_bastp ? `<button class="btn btn-ghost btn-sm" data-act="nomor.edit" data-jenis="BASTP" data-id="${b.id}">${I('edit')} Edit Nomor BAST</button>` : ''}</div>` : ''}
       <div class="grid g2 mt" style="gap:12px">${[['TANGGAL PENERIMAAN', TGL(b.tanggal, 1)], ['NO. SURAT JALAN', b.no_surat_jalan], ['PENERIMA / PJ RUANGAN', b.penerima_nama], ['NIP PENERIMA', b.penerima_nip], ['RUANGAN', b.ruangan], ['MENGETAHUI (PPTK)', b.pptk_nama]].map(([k, v]) => `<div><div class="mono xs muted">${k}</div><div class="small">${E(v || '-')}</div></div>`).join('')}</div>
       <div class="row wrap mt" style="gap:8px">${ttdStat('TTD Penerima', b.penerima_ttd_file_id, signed)}${ttdStat('TTD PPTK', b.pptk_ttd_file_id, signed)}</div>
       <h3 class="mt">Barang Diterima</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Barang</th><th>Lot / Exp</th><th class="num">SP</th><th class="num">Diterima</th><th>Kondisi</th></tr></thead><tbody>${items.map(d => `<tr><td>${E(d.nama)}<div class="sub">${E(d.catatan || '')}</div></td><td class="mono xs">${E(d.lot || '-')}<br>${E(d.exp || '')}</td><td class="num">${d.qty_po}</td><td class="num" style="color:${d.qty_diterima < d.qty_po ? 'var(--warn)' : 'var(--success-dark)'}">${d.qty_diterima} ${E(d.satuan)}</td><td class="small">${E(d.kondisi)}</td></tr>`).join('')}</tbody></table></div>
@@ -214,8 +215,10 @@ Pages['bast-form'] = {
       foto: (draft && Array.isArray(draft.foto) ? draft.foto : []).map(f => ({ fileId: f, name: 'Foto tersimpan' })),
       items: pd.map(x => { const di = dItems.find(z => z.po_detail_id === x.id) || {}; const sisa = x.qty - (got[x.id] || 0); return { po_detail_id: x.id, nama: x.nama, spes: x.spesifikasi, qty_po: x.qty, sisa, satuan: x.satuan, qty_diterima: di.qty_diterima != null ? di.qty_diterima : sisa, kondisi: di.kondisi || 'Baik & Berfungsi', lot: di.lot || '', exp: di.exp || '', catatan: di.catatan || '' }; }),
       penerima_id: draft ? draft.penerima_id || '' : '', penerima_nama: draft ? draft.penerima_nama || '' : '', penerima_nip: draft ? draft.penerima_nip || '' : '',
-      penerima_jabatan: draft ? draft.penerima_jabatan || '' : '', ruangan: draft ? draft.ruangan || '' : (po.unit || ''), simpan_penerima: true, simpan_spesimen: true
+      penerima_jabatan: draft ? draft.penerima_jabatan || '' : '', ruangan: draft ? draft.ruangan || '' : (po.unit || ''), simpan_penerima: true, simpan_spesimen: true,
+      nomor_bast: draft ? draft.nomor_bast || '' : '', nomor_bastp: draft ? draft.nomor_bastp || '' : ''
     };
+    const nManual = S.settings.MODE_NOMOR_BAPB === 'manual';
     const late = po.tgl_kirim ? -UI.daysTo(po.tgl_kirim) : null;
     const minFoto = Number(S.settings.MIN_FOTO_BAST || 0);
     const myTtd = Store.myTtd();
@@ -226,7 +229,8 @@ Pages['bast-form'] = {
     }) + `<div class="card"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">1</span><h3>Referensi Surat Pesanan</h3></div>
       <div class="mono xs mb" style="letter-spacing:.06em">PILIH SURAT PESANAN <span style="color:var(--danger)">*</span></div>
       <div class="row wrap"><select class="select tinted" style="flex:1;min-width:220px" data-ch="bf.po">${UI.opt(ready.map(p => ({ v: p.id, l: p.nomor_po + ' — ' + vName(p.vendor_id) + ' (' + (p.paket || p.kategori || '') + ')' })), po.id)}</select><button class="btn btn-soft" data-act="po.print" data-id="${po.id}">${I('eye')} Lihat SP</button></div>
-      <div class="grid act-item mt bf-ref" style="gap:12px">${[['VENDOR PENYEDIA', E(v.nama || '-') + `<div class="xs muted">NIB: ${E(v.nib || '-')}</div>`], ['KONTAK REKANAN', `<span class="mono small">${E(v.telepon || '-')}</span><div class="xs muted">${E(v.email || '')}</div>`], ['UNIT PEMESAN', E(po.unit || '-')], ['NILAI TOTAL SP', `<b style="font-family:var(--serif);font-size:17px;color:var(--primary-deep)">${RP(po.total)}</b>`], ['TGL PENGIRIMAN', po.tgl_kirim ? TGL(po.tgl_kirim, 1) + `<div class="xs" style="color:${late > 0 ? 'var(--danger)' : 'var(--success-dark)'}">${late > 0 ? 'Terlambat ' + late + ' hari' : 'Sesuai jadwal'}</div>` : '-']].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small">${x}</div></div>`).join('')}</div></div>
+      <div class="grid act-item mt bf-ref" style="gap:12px">${[['VENDOR PENYEDIA', E(v.nama || '-') + `<div class="xs muted">NIB: ${E(v.nib || '-')}</div>`], ['KONTAK REKANAN', `<span class="mono small">${E(v.telepon || '-')}</span><div class="xs muted">${E(v.email || '')}</div>`], ['UNIT PEMESAN', E(po.unit || '-')], ['NILAI TOTAL SP', `<b style="font-family:var(--serif);font-size:17px;color:var(--primary-deep)">${RP(po.total)}</b>`], ['TGL PENGIRIMAN', po.tgl_kirim ? TGL(po.tgl_kirim, 1) + `<div class="xs" style="color:${late > 0 ? 'var(--danger)' : 'var(--success-dark)'}">${late > 0 ? 'Terlambat ' + late + ' hari' : 'Sesuai jadwal'}</div>` : '-']].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small">${x}</div></div>`).join('')}</div>
+      <div class="grid g2 mt" style="gap:12px"><div class="field"><label>Nomor BAPB${nManual ? ' <span class="req">*</span>' : ''}</label><input class="input mono" value="${E(d.nomor_bast)}" data-in="bf.f" data-f="nomor_bast" placeholder="${nManual ? 'mis. 1/SPB/OBAT/BLUD/III/2026' : 'Kosongkan = otomatis'}"></div><div class="field"><label>Nomor BAST Hasil Pekerjaan${nManual ? ' <span class="req">*</span>' : ''}</label><input class="input mono" value="${E(d.nomor_bastp)}" data-in="bf.f" data-f="nomor_bastp" placeholder="${nManual ? 'wajib diisi saat disahkan' : 'Kosongkan = otomatis saat disahkan'}"></div></div></div>
     <div class="card mt"><div class="card-head"><span class="avatar a4" style="width:26px;height:26px;border-radius:4px">2</span><h3>Detail Barang Diterima & Pemeriksaan Fisik</h3></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th style="min-width:180px">Nama Barang / Jasa</th><th style="min-width:150px">Lot / Exp</th><th class="num">Qty SP</th><th style="width:110px">Qty Diterima</th><th style="min-width:170px">Kondisi Fisik</th><th style="min-width:180px">Catatan Pemeriksaan</th></tr></thead><tbody id="bf-items">${d.items.map((it, i) => `<tr>
         <td>${E(it.nama)}<div class="mono xs muted">${E(it.spes || '')}</div></td>
@@ -323,6 +327,12 @@ Act['bf.save'] = el => {
   if (d.foto.some(f => !f.fileId && !f.err)) { UI.toast('Tunggu hingga semua foto selesai diunggah', 'warn'); return; }
   const foto = d.foto.filter(f => f.fileId).map(f => f.fileId);
   const ttd = sec._pjTtd ? sec._pjTtd.get() : { mode: 'kosong' };
+  d.nomor_bast = String(d.nomor_bast || '').replace(/\s+/g, ' ').trim(); d.nomor_bastp = String(d.nomor_bastp || '').replace(/\s+/g, ' ').trim();
+  const nMan = S.settings.MODE_NOMOR_BAPB === 'manual', exB = Store.byId('bast', d.id);
+  if (nMan && !d.nomor_bast && !(exB && exB.nomor_bast)) { UI.toast('Nomor BAPB wajib diisi', 'err'); sec.querySelector('[data-f="nomor_bast"]').focus(); return; }
+  if (nMan && sign && !d.nomor_bastp && !(exB && exB.nomor_bastp)) { UI.toast('Nomor BAST Hasil Pekerjaan wajib diisi', 'err'); sec.querySelector('[data-f="nomor_bastp"]').focus(); return; }
+  const dupB = S.bast.find(x => x.id !== d.id && ((d.nomor_bast && String(x.nomor_bast || '').toLowerCase() === d.nomor_bast.toLowerCase()) || (d.nomor_bastp && String(x.nomor_bastp || '').toLowerCase() === d.nomor_bastp.toLowerCase())));
+  if (dupB) { UI.toast('Nomor sudah dipakai dokumen ' + (dupB.nomor_bast || ''), 'err'); return; }
   if (sign) {
     if (!d.kesimpulan) { UI.toast('Pilih kesimpulan hasil pemeriksaan', 'err'); return; }
     if (foto.length < minFoto) { UI.toast('Foto dokumentasi minimal ' + minFoto + ' berkas (baru ' + foto.length + ')', 'err'); return; }
@@ -333,12 +343,13 @@ Act['bf.save'] = el => {
   const payload = {
     id: d.id, po_id: d.po_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, sign,
     penerima_id: d.penerima_id, penerima_nama: String(d.penerima_nama || '').trim(), penerima_nip: d.penerima_nip, penerima_jabatan: d.penerima_jabatan, ruangan: d.ruangan,
+    nomor_bast: d.nomor_bast, nomor_bastp: d.nomor_bastp,
     simpan_penerima: !d.penerima_id && !!d.simpan_penerima, simpan_spesimen: !!d.simpan_spesimen, penerima_ttd_mode: ttd.mode, penerima_ttd_base64: ttd.base64 || '',
     items: d.items.map(i => ({ po_detail_id: i.po_detail_id, qty_diterima: Number(i.qty_diterima) || 0, kondisi: i.kondisi, lot: i.lot, exp: i.exp, catatan: i.catatan }))
   };
   const existed = Store.byId('bast', d.id);
   const pdMap = {}; Store.poItems(po.id).forEach(x => pdMap[x.id] = x);
-  const localBast = { ...(existed || {}), id: d.id, nomor_bast: existed ? existed.nomor_bast : '', po_id: po.id, vendor_id: po.vendor_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, pptk_nama: S.user.nama, pptk_nip: S.user.nip, penerima_id: d.penerima_id, penerima_nama: payload.penerima_nama, penerima_nip: d.penerima_nip, penerima_jabatan: d.penerima_jabatan, ruangan: d.ruangan, status: sign ? 'Ditandatangani' : 'Draft', created_at: existed ? existed.created_at : new Date().toISOString() };
+  const localBast = { ...(existed || {}), id: d.id, nomor_bast: d.nomor_bast || (existed ? existed.nomor_bast : ''), nomor_bastp: d.nomor_bastp || (existed ? existed.nomor_bastp || '' : ''), po_id: po.id, vendor_id: po.vendor_id, tanggal: d.tanggal, no_surat_jalan: d.no_surat_jalan, kesimpulan: d.kesimpulan, catatan: d.catatan, checklist: d.checklist, foto, pptk_nama: S.user.nama, pptk_nip: S.user.nip, penerima_id: d.penerima_id, penerima_nama: payload.penerima_nama, penerima_nip: d.penerima_nip, penerima_jabatan: d.penerima_jabatan, ruangan: d.ruangan, status: sign ? 'Ditandatangani' : 'Draft', created_at: existed ? existed.created_at : new Date().toISOString() };
   let oldDet, oldPo;
   const full = d.items.every(i => Number(i.qty_diterima) >= i.sisa);
   API.mutate({
@@ -449,8 +460,7 @@ function invCreate(bastId, onClose) {
       <div class="card flat mt"><div class="card-head" style="margin-bottom:8px"><span style="color:var(--primary)">${I('pen')}</span><h3>Tanda Tangan Penagih (Penyedia)</h3></div>
         <div class="form-grid"><div class="field"><label>Nama penandatangan</label><input class="input" id="iv-tn"></div><div class="field"><label>Jabatan</label><input class="input" id="iv-tj" placeholder="Direktur"></div></div>
         <div id="iv-ttd" class="mt-s"></div>
-        <label class="check mt-s"><input type="checkbox" id="iv-spes" checked> <span class="small">Simpan sebagai spesimen TTD rekanan</span></label>
-        <p class="xs muted mt-s">Pada cetakan invoice, kolom "Setuju dibayar" ditandatangani PPK setelah invoice disetujui.</p></div>`,
+        <label class="check mt-s"><input type="checkbox" id="iv-spes" checked> <span class="small">Simpan sebagai spesimen TTD rekanan</span></label></div>`,
     foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn" id="iv-ok">${I('check')} Simpan & Ajukan ke PPK</button>`
   });
   let picker = null, curV = null;
@@ -508,13 +518,13 @@ Act['inv.pay'] = el => {
 function invDrawer(id, onClose) {
   const i = Store.byId('invoice', id); if (!i) return;
   const v = Store.vendor(i.vendor_id) || {}, p = Store.po(i.po_id) || {}, b = Store.byId('bast', i.bast_id) || {};
-  const tpl = Doc.activeTpl('INVOICE'), ok = ['Disetujui', 'Dibayar'].includes(i.status), basah = S.settings.TTD_MODE === 'basah';
+  const tpl = Doc.activeTpl('INVOICE'), basah = S.settings.TTD_MODE === 'basah';
   const m = UI.modal({
     drawer: true, onClose, title: `<span class="mono">${E(i.nomor_invoice || 'Invoice')}</span>`, sub: E(v.nama || ''),
     body: `<div class="row">${CHIP(i.status)}<span class="spacer"></span><b class="num" style="font-size:18px;color:var(--primary-deep)">${RP(i.netto)}</b></div>
       <div class="doc-actions mt"><button class="btn" data-act="doc.open" data-jenis="INVOICE" data-id="${i.id}">${I('print')} Cetak Invoice / PDF</button></div>
       <div class="grid g2 mt" style="gap:12px">${[['TANGGAL', TGL(i.tanggal, 1)], ['JATUH TEMPO', TGL(i.jatuh_tempo, 1)], ['NO. E-FAKTUR', i.no_faktur], ['SUMBER DANA', i.sumber_dana], ['REFERENSI SP', p.nomor_po], ['REFERENSI BAPB', b.nomor_bast], ['NO. SP2D', i.no_sp2d], ['TANGGAL BAYAR', TGL(i.tgl_bayar)]].map(([k, x]) => `<div><div class="mono xs muted">${k}</div><div class="small mono">${E(x || '-')}</div></div>`).join('')}</div>
-      <h3 class="mt">Penandatangan</h3><div class="row wrap" style="gap:8px"><span class="chip nodot ${i.ttd_file_id && !basah ? 'st-green' : ''}">${I('pen')} Penyedia: ${E(i.ttd_nama || v.pic_nama || '-')}${i.ttd_jabatan ? ' (' + E(i.ttd_jabatan) + ')' : ''} · ${i.ttd_file_id && !basah ? 'TTD gambar' : 'TTD basah'}</span><span class="chip nodot ${ok && !basah ? 'st-green' : ''}">${I('pen')} Setuju dibayar PPK: ${ok ? (basah ? 'TTD basah' : 'TTD gambar bila ada spesimen') : 'menunggu persetujuan'}</span></div>
+      <h3 class="mt">Penandatangan</h3><div class="row wrap" style="gap:8px"><span class="chip nodot ${i.ttd_file_id && !basah ? 'st-green' : ''}">${I('pen')} Penyedia: ${E(i.ttd_nama || v.pic_nama || '-')}${i.ttd_jabatan ? ' (' + E(i.ttd_jabatan) + ')' : ''} · ${i.ttd_file_id && !basah ? 'TTD gambar' : 'TTD basah'}</span></div>
       <h3 class="mt">Rincian Perhitungan</h3><table class="tbl"><tbody><tr><td>DPP (nilai barang diterima)</td><td class="num">${RP(i.dpp)}</td></tr><tr><td>PPN ${E(S.settings.PPN_RATE)}%</td><td class="num">${RP(i.ppn)}</td></tr><tr><td>Bruto (DPP + PPN)</td><td class="num">${RP(i.dpp + i.ppn)}</td></tr><tr><td>Potongan PPN (wapu BLUD)</td><td class="num">− ${RP(i.ppn)}</td></tr><tr><td>Potongan PPh 22 ${E(S.settings.PPH22_RATE)}%</td><td class="num">− ${RP(i.pph)}</td></tr></tbody><tfoot><tr><td>Netto ditransfer</td><td class="num">${RP(i.netto)}</td></tr></tfoot></table>
       <h3 class="mt">Rekening Tujuan</h3><div class="act-item small mono">${E(v.bank || '-')} · ${E(v.no_rekening || '-')}<br>a.n. ${E(v.nama_rekening || '-')}</div>
       ${i.catatan ? `<p class="small mt"><b>Catatan:</b> ${E(i.catatan)}</p>` : ''}

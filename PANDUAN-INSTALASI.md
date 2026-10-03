@@ -34,6 +34,12 @@
 7. Frontend: ganti seluruh isi repo GitHub Pages dengan isi ZIP baru (**pertahankan `js/config.js` lama** atau isi ulang `GAS_URL`) → `git add . && git commit -m "v1.1" && git push`. Pengguna cukup memuat ulang (Ctrl+Shift+R); cache lokal lama dibuang otomatis.
 8. Lanjutkan ke **bagian 4 (Dokumen & TTD)** dan **bagian 6 (WhatsApp & CRM)**.
 
+### Pembaruan revisi 1.2 (nomor manual, BAPB tanpa garis, invoice tanpa TTD PPK)
+1. Ganti isi `Kode`, `Modul`, `DocEngine` di editor Apps Script → **Deploy → Kelola deployment → Versi baru**.
+2. Ganti isi repo frontend dengan ZIP baru (sekarang ada folder **`templates/`** berisi file Word template) → push.
+3. Jalankan **`setupAppEnvironment`** sekali (menambah pengaturan *mode penomoran*).
+4. Bila sebelumnya sudah memasang template bawaan: **Kelola Template → Pasang Template Bawaan** (atau jalankan fungsi `pasangTemplateBawaan` di editor). Versi lama otomatis dinonaktifkan, filenya tidak dihapus. Template kustom Anda tidak diganggu.
+
 Catatan upgrade:
 - Data sheet `Kontrak` lama **tidak dihapus** dari spreadsheet — hanya modulnya yang tidak lagi tampil.
 - Nama sheet internal `BAST` / `BAST_Detail` tetap; di aplikasi tampil sebagai **BAPB**. Nomor BAPB lama tetap, nomor baru mengikuti format di *Dokumen & TTD*.
@@ -126,7 +132,7 @@ Catatan upgrade:
 | **Surat Pesanan (SP)** | Surat Pesanan (PO) | PPK | setelah SP disetujui PPK |
 | **BAPB / Surat Penerimaan Barang** | Form *Penerimaan Barang (BAPB)* | **Penanggung Jawab Ruangan / Penerima** · Mengetahui **PPTK** | — |
 | **BAST Hasil Pekerjaan (BASTP)** | BAPB yang disahkan (otomatis bernomor) | Penyedia (Pihak Pertama) · PPK (Pihak Kedua) | setelah BAPB disahkan |
-| **Invoice / Tagihan** | Invoice | Penyedia (penagih) · "Setuju dibayar" PPK | setelah invoice disetujui |
+| **Invoice / Tagihan** | Invoice | Penyedia (penagih) saja | — (tanpa TTD PPK) |
 
 Isian baru di form SP: **Kegiatan, Sub Kegiatan, Kode Rekening, Waktu Penyelesaian (hari), Tanggal barang diterima, Alamat pengiriman** (bawaan diatur di *Dokumen & TTD*).
 
@@ -147,12 +153,13 @@ Tombol **Cetak SP / PDF**, **Cetak BAPB / PDF**, **Cetak BAST Hasil Pekerjaan**,
 
 ### 4.4 Mengubah desain (custom) — gas-doc-engine
 
-1. **Kelola Template → Pasang Template Bawaan** → 4 Google Docs (SP, BAPB, BASTP, Invoice) dibuat di `📂 Template_Docs` dan langsung aktif.
+1. Template bawaan **sudah disiapkan otomatis** saat `setupAppEnvironment` dijalankan: 4 Google Docs (SP, BAPB, BASTP, Invoice) dibuat di folder Drive `📂 Template_Docs` dan langsung aktif. Pasang ulang kapan saja lewat **Kelola Template → Pasang Template Bawaan** (memakai file Word `templates/*.docx` dari frontend — hasil konversi ke Google Docs paling rapi) atau fungsi `pasangTemplateBawaan()` di editor.
+   - File Word yang sama bisa diunduh dari tombol **.docx** di tiap kartu Kelola Template (atau folder `templates/` di ZIP) dan diunggah manual ke Drive: klik kanan → *Buka dengan Google Dokumen* → daftarkan lewat **Template Kustom**.
 2. Klik **Edit desain** → ubah tata letak, teks, tabel, logo sesuka hati di Google Docs. **Pertahankan penanda** `{{...}}`.
 3. Kembali ke **Kelola Template → Scan Ulang → Mapping → Simpan & Aktifkan**.
 4. Selanjutnya tombol **PDF dari Template (Drive)** memakai desain tersebut.
 
-Penanda yang tersedia (lengkap: tombol **Daftar Penanda**):
+Penanda yang tersedia — referensi lengkap: **`REFERENSI-PLACEHOLDER.md`** / `templates/Referensi_Penanda_Template.docx` (berisi daftar penanda **per template bawaan**), atau tombol **Daftar Penanda** di Kelola Template (bisa diunduh .docx / Excel):
 
 ```
 {{NOMOR_SP}} {{TANGGAL_SP|tanggal}} {{NAMA_PENYEDIA}} {{KEGIATAN}} {{KODE_REKENING}}
@@ -167,6 +174,19 @@ Penanda yang tersedia (lengkap: tombol **Daftar Penanda**):
 - Penanda yang tidak dikenal sistem → mapping **Input manual saat generate** (ditanyakan saat membuat PDF).
 - Template kustom milik sendiri: **Template Kustom** → tempel URL Google Docs → **Scan Penanda**. Format lama `[NAMA_PLACEHOLDER]` tetap didukung.
 - Hapus template kustom kapan saja — dokumen tetap bisa dicetak dengan format bawaan.
+
+### 4.5 Nomor dokumen: otomatis, manual, atau edit
+
+| Dokumen | Isi manual saat membuat | Edit setelah terbit | Yang berhak |
+|---|---|---|---|
+| Surat Pesanan (SP) | kolom **Nomor Surat Pesanan** di form SP | detail SP → **Edit Nomor** | Admin, Pejabat Pengadaan |
+| BAPB | kolom **Nomor BAPB** di form BAPB | detail BAPB → **Edit Nomor BAPB** | Admin, PPTK |
+| BAST Hasil Pekerjaan | kolom **Nomor BAST Hasil Pekerjaan** di form BAPB | detail BAPB → **Edit Nomor BAST** | Admin, PPTK |
+
+- Kosongkan kolom nomor → nomor dibuat otomatis sesuai *Format Penomoran*.
+- *Pengaturan → Dokumen & TTD → Penomoran*: pilih **Manual** agar nomor **wajib** diisi sendiri (tidak ada nomor otomatis).
+- Nomor harus unik — sistem menolak nomor yang sudah dipakai dokumen lain. Setiap perubahan tercatat di Log Aktivitas.
+- Cetak/PDF berikutnya memakai nomor baru. PDF lama yang sudah tersimpan di Drive tidak berubah (buat ulang bila perlu).
 
 ---
 

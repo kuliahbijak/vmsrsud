@@ -483,7 +483,7 @@ function poDrawer(id, onClose) {
       ${basts.length ? `<h3 class="mt">BAPB (Penerimaan)</h3>${basts.map(b => `<a class="file-row" style="text-decoration:none;color:inherit" href="#/bast/${b.id}">${I('clipcheck', 'fi')}<div style="flex:1"><div class="mono small">${E(b.nomor_bast)}</div><div class="xs muted">${TGL(b.tanggal)} · ${E(b.kesimpulan || '')}</div></div>${CHIP(b.status)}</a>`).join('')}` : ''}
       ${invs.length ? `<h3 class="mt">Invoice</h3>${invs.map(i => `<a class="file-row" style="text-decoration:none;color:inherit" href="#/invoice/${i.id}">${I('money', 'fi')}<div style="flex:1"><div class="mono small">${E(i.nomor_invoice)}</div><div class="xs muted">Netto ${RP(i.netto)}</div></div>${CHIP(i.status)}</a>`).join('')}` : ''}
       ${p.doc_file_id ? `<h3 class="mt">Dokumen Resmi</h3><a class="file-row" target="_blank" rel="noopener" href="${UI.driveUrl(p.doc_file_id)}">${I('pdf', 'fi')}<div style="flex:1" class="mono small">SP_${E(p.nomor_po)}.pdf</div>${I('ext')}</a>` : ''}`,
-    foot: `<button class="btn ${approved ? '' : 'btn-outline'}" data-act="po.print" data-id="${p.id}">${I('print')} Cetak SP / PDF</button><span class="spacer"></span>
+    foot: `<button class="btn ${approved ? '' : 'btn-outline'}" data-act="po.print" data-id="${p.id}">${I('print')} Cetak SP / PDF</button>${can('poEdit') ? `<button class="btn btn-ghost" data-act="nomor.edit" data-jenis="PO" data-id="${p.id}">${I('edit')} Edit Nomor</button>` : ''}<span class="spacer"></span>
       ${can('poEdit') && p.status === 'Draft' ? `<button class="btn btn-outline-danger" data-act="po.del" data-id="${p.id}">${I('trash')}</button>` : ''}
       ${can('poEdit') && ['Draft', 'Ditolak'].includes(p.status) ? `<a class="btn btn-outline" href="#/po-form/${p.id}">${I('edit')} Edit</a><button class="btn" data-act="po.submitQuick" data-id="${p.id}">Ajukan ke PPK</button>` : ''}
       ${can('poApprove') && p.status === 'Menunggu Approval' ? `<a class="btn btn-success" href="#/approval/${p.id}">${I('shield')} Tinjau & Setujui</a>` : ''}
@@ -492,6 +492,29 @@ function poDrawer(id, onClose) {
   m.el.addEventListener('click', e => { if (e.target.closest('a[href^="#/"],[data-act="po.del"],[data-act="po.submitQuick"]')) m.close(); });
 }
 Act['po.print'] = el => Doc.open('PO', el.dataset.id);
+/** Edit nomor dokumen: jenis PO | BAPB | BASTP (nomor manual, dicek unik di server) */
+const NOMOR_DOK = { PO: ['po', 'nomor_po', 'Nomor Surat Pesanan'], BAPB: ['bast', 'nomor_bast', 'Nomor BAPB'], BASTP: ['bast', 'nomor_bastp', 'Nomor BAST Hasil Pekerjaan'] };
+Act['nomor.edit'] = el => {
+  const j = el.dataset.jenis, c = NOMOR_DOK[j], r = Store.byId(c[0], el.dataset.id); if (!r) return;
+  const m = UI.modal({ title: 'Edit ' + c[2], sub: r[c[1]] ? 'Nomor saat ini: <span class="mono">' + E(r[c[1]]) + '</span>' : 'Belum bernomor', body: `<div class="field"><label>${c[2]} baru <span class="req">*</span></label><input class="input mono" id="nm-val" value="${E(r[c[1]] || '')}" autocomplete="off"><span class="help">Nomor harus unik. Dokumen cetak/PDF berikutnya memakai nomor baru; PDF lama di Drive tidak berubah.</span></div>`, foot: `<button class="btn btn-outline" data-close>Batal</button><button class="btn" id="nm-ok">${I('check')} Simpan Nomor</button>` });
+  const inp = m.q('#nm-val'); setTimeout(() => { inp.focus(); inp.select(); }, 40);
+  const save = async () => {
+    const v = inp.value.replace(/\s+/g, ' ').trim();
+    if (!v) { inp.classList.add('invalid'); return; }
+    if (v === r[c[1]]) { m.close(); return; }
+    UI.busy(m.q('#nm-ok'), true);
+    try {
+      const lama = r[c[1]] || '', res = await API.call('editNomor', { jenis: j, id: r.id, nomor: v });
+      Store.upsert(c[0], res.data[c[0]]); UI.toast(res.message, 'ok', 5000); m.close();
+      // perbarui teks nomor di drawer yang sedang terbuka, lalu daftar di belakangnya
+      const dr = document.querySelector('.drawer');
+      if (dr && lama) { const w = document.createTreeWalker(dr, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) if (n.nodeValue.indexOf(lama) > -1) n.nodeValue = n.nodeValue.split(lama).join(v); }
+      App.refreshCurrent();
+    }
+    catch (e) { UI.toast(e.message, 'err', 6000); UI.busy(m.q('#nm-ok'), false); inp.classList.add('invalid'); }
+  };
+  m.q('#nm-ok').onclick = save; inp.onkeydown = e => { if (e.key === 'Enter') save(); };
+};
 Act['po.del'] = async el => {
   const p = Store.po(el.dataset.id);
   if (!await UI.confirm('Hapus draft PO?', `Draft <b>${E(p.nomor_po)}</b> akan dihapus permanen.`, { danger: true, ok: 'Hapus' })) return;
@@ -523,10 +546,10 @@ Pages['po-form'] = {
     const f = (n, l, o = {}) => `<div class="field ${o.full ? 'full' : ''}"><label>${l}${o.req ? ' <span class="req">*</span>' : ''}</label>${o.select ? `<select class="select" name="${n}">${UI.opt(o.select, d[n], o.ph)}</select>` : o.textarea ? `<textarea class="textarea" name="${n}" rows="2">${E(d[n] || '')}</textarea>` : `<input class="input ${o.mono ? 'mono' : ''}" name="${n}" type="${o.type || 'text'}" value="${E(d[n] == null ? '' : d[n])}" placeholder="${E(o.ph || '')}" ${o.list ? `list="${o.list}"` : ''}>`}</div>`;
     const units = [...new Set(S.po.map(p => p.unit).concat(['Instalasi Farmasi', 'Rawat Inap & ICU', 'Instalasi Bedah Sentral', 'Instalasi Lab Patologi Klinik', 'IGD', 'IPSRS', 'Radiologi']).filter(Boolean))];
     const cats = [...new Set(S.po.map(p => p.kategori).concat(['Obat Kronis & Generik', 'Alat Kesehatan', 'Reagen Laboratorium', 'BMHP', 'Gas Medis', 'Linen', 'Pemeliharaan Alkes']).filter(Boolean))];
-    el.innerHTML = `<a href="#/po" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali ke Daftar PO</a>` + pageHead({ eyebrow: `<span class="tag">Pejabat Pengadaan</span> • ${ex ? 'Revisi' : 'PO Baru'}`, title: ex ? 'Edit ' + E(ex.nomor_po) : 'Buat Purchase Order', sub: 'Nomor PO dibuat otomatis oleh sistem. Harga satuan belum termasuk PPN.', extra: ex ? CHIP(ex.status) : '' }) +
+    el.innerHTML = `<a href="#/po" class="row small" style="text-decoration:underline;gap:6px">${I('back')} Kembali ke Daftar PO</a>` + pageHead({ eyebrow: `<span class="tag">Pejabat Pengadaan</span> • ${ex ? 'Revisi' : 'PO Baru'}`, title: ex ? 'Edit ' + E(ex.nomor_po) : 'Buat Purchase Order', sub: (S.settings.MODE_NOMOR_PO === 'manual' ? 'Nomor Surat Pesanan diisi manual.' : 'Nomor Surat Pesanan otomatis, atau isi sendiri secara manual.') + ' Harga satuan belum termasuk PPN.', extra: ex ? CHIP(ex.status) : '' }) +
       `${ex && ex.status === 'Ditolak' && ex.catatan_ppk ? `<div class="info-box mb" style="background:var(--danger-tint);color:var(--danger-text)">${I('alert')}<span><b>Catatan revisi PPK:</b> ${E(ex.catatan_ppk)}</span></div>` : ''}
       <form id="poform" autocomplete="off"><div class="card"><div class="card-head"><div class="ic">${I('receipt')}</div><div style="flex:1"><h3>1. Informasi Pesanan</h3><p>Rekanan penyedia dan rujukan pengadaan</p></div></div>
-      <div class="grid g3" style="gap:16px">${f('vendor_id', 'Vendor / Penyedia', { req: 1, select: vopts, ph: 'Pilih rekanan…' })}${f('tanggal', 'Tanggal PO', { type: 'date', req: 1 })}${f('prioritas', 'Prioritas', { select: ['Normal', 'Urgent'] })}
+      <div class="grid g3" style="gap:16px">${f('nomor_po', 'Nomor Surat Pesanan', { mono: 1, req: S.settings.MODE_NOMOR_PO === 'manual', ph: S.settings.MODE_NOMOR_PO === 'manual' ? 'mis. 027/14/SP/PPK-RSUD/BLUD/2026' : 'Kosongkan = otomatis' })}${f('vendor_id', 'Vendor / Penyedia', { req: 1, select: vopts, ph: 'Pilih rekanan…' })}${f('tanggal', 'Tanggal PO', { type: 'date', req: 1 })}${f('prioritas', 'Prioritas', { select: ['Normal', 'Urgent'] })}
       ${f('unit', 'Unit Pemesan', { list: 'dl-unit', req: 1 })}${f('kategori', 'Kategori Belanja', { list: 'dl-kat' })}${f('sumber_dana', 'Sumber Dana', { list: 'dl-dana' })}
       ${f('paket', 'Pekerjaan / Nama Paket (tercetak di SP)')}${f('rujukan', 'Rujukan / No. E-Katalog / E-Purchasing', { mono: 1 })}${f('kode_rekening', 'Kode Rekening Belanja', { mono: 1, list: 'dl-rek', ph: '5.1.02.01.001.00038 (Belanja Obat-obatan…)' })}
       ${f('kegiatan', 'Kegiatan', { list: 'dl-keg' })}${f('sub_kegiatan', 'Sub Kegiatan', { list: 'dl-subkeg' })}${f('waktu_penyelesaian', 'Waktu Penyelesaian (hari kalender)', { type: 'number', mono: 1 })}
@@ -585,12 +608,16 @@ Act['pof.save'] = el => {
   if (!d.vendor_id) { form.vendor_id.classList.add('invalid'); form.vendor_id.focus(); UI.toast('Pilih vendor terlebih dahulu', 'err'); return; }
   if (!d.unit) { form.unit.classList.add('invalid'); form.unit.focus(); UI.toast('Unit pemesan wajib diisi', 'err'); return; }
   if (!items.length) { UI.toast('Minimal 1 item barang/jasa', 'err'); return; }
+  d.nomor_po = String(d.nomor_po || '').trim();
+  if (!d.nomor_po && S.settings.MODE_NOMOR_PO === 'manual') { form.nomor_po.classList.add('invalid'); form.nomor_po.focus(); UI.toast('Nomor Surat Pesanan wajib diisi', 'err'); return; }
+  const dupNo = d.nomor_po && S.po.find(x => x.id !== d.id && String(x.nomor_po || '').trim().toLowerCase() === d.nomor_po.toLowerCase());
+  if (dupNo) { form.nomor_po.classList.add('invalid'); form.nomor_po.focus(); UI.toast('Nomor ' + d.nomor_po + ' sudah dipakai SP lain', 'err'); return; }
   const bad = items.findIndex(i => !(i.qty > 0)); if (bad > -1) { UI.toast('Qty item #' + (bad + 1) + ' harus > 0', 'err'); return; }
   const rate = Number(S.settings.PPN_RATE || 11), sub = items.reduce((a, i) => a + i.qty * i.harga, 0), ppn = Math.round(sub * rate / 100);
   const existed = Store.po(d.id);
   d.waktu_penyelesaian = Number(d.waktu_penyelesaian) || 0;
   if (!d.tgl_kirim && d.waktu_penyelesaian) d.tgl_kirim = DC.addDays(d.tanggal, d.waktu_penyelesaian);
-  const rec = { ...(existed || {}), ...d, subtotal: sub, ppn, total: sub + ppn, status: submit ? 'Menunggu Approval' : 'Draft', nomor_po: existed ? existed.nomor_po : '', dibuat_oleh: existed ? existed.dibuat_oleh : S.user.nama, created_at: existed ? existed.created_at : new Date().toISOString() };
+  const rec = { ...(existed || {}), ...d, subtotal: sub, ppn, total: sub + ppn, status: submit ? 'Menunggu Approval' : 'Draft', nomor_po: d.nomor_po || (existed ? existed.nomor_po : ''), dibuat_oleh: existed ? existed.dibuat_oleh : S.user.nama, created_at: existed ? existed.created_at : new Date().toISOString() };
   delete rec.items;
   const payload = { ...d, items, submit };
   let oldDet;
