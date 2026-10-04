@@ -123,6 +123,28 @@ Catatan upgrade:
 
 ---
 
+### 3a. Bersihkan data contoh sebelum dipakai resmi
+
+Bila sebelumnya menjalankan `seedDemoData` (data demo/pelatihan), bersihkan sebelum aplikasi dipakai resmi:
+
+1. Pastikan sudah ada **akun Administrator asli** (bukan `*.demo@…`): *Pengaturan Sistem → Pengguna & Role → Tambah Pengguna* (role Administrator), lalu **login dengan akun itu**.
+2. *Pengaturan Sistem → **Bersihkan Data*** → pilih jenis pembersihan:
+
+| Pilihan | Yang dihapus | Yang tetap |
+|---|---|---|
+| **Hapus data contoh saja** (disarankan) | akun `*.demo`, rekanan contoh beserta SP/BAPB/invoice/notifikasi/kontak CRM-nya, barang & penanggung jawab contoh | semua data asli yang sudah diinput |
+| **Kosongkan semua transaksi** | semua SP, BAPB, invoice, notifikasi, antrean WA, blast, riwayat CRM | rekanan, barang, penanggung jawab, akun |
+| **Mulai dari nol** | semua transaksi + semua master + semua akun kecuali Administrator asli | pengaturan, kop & logo, template dokumen, TTD |
+
+3. Klik **Periksa data yang akan dihapus** → periksa jumlahnya → ketik `HAPUS DATA` → **Hapus Sekarang**.
+
+- Backup penuh bertanda **[pra-reset]** dibuat otomatis lebih dulu. Bila keliru, pulihkan dari *Backup & Restore*.
+- Nomor urut SP/BAPB/BAST/Invoice kembali mulai dari 1 bila datanya sudah kosong.
+- Alternatif dari editor Apps Script: jalankan fungsi **`hapusDataContoh`**. Bila setelahnya tidak ada akun Admin, dibuatkan akun Admin untuk email Anda (password sementara di Log eksekusi).
+- Akun demo yang dihapus otomatis keluar (sesinya tidak berlaku lagi).
+
+---
+
 ## 4. Dokumen: SP · BAPB · BAST Hasil Pekerjaan · Invoice
 
 ### 4.1 Alur & penanda tangan

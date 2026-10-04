@@ -300,7 +300,7 @@ Act['lap.export'] = () => {
 /* =====================================================================
    PENGATURAN SISTEM (ADMIN)
    ===================================================================== */
-const SET_TABS = [{ id: 'users', l: 'Pengguna & Role' }, { id: 'app', l: 'Pengaturan Aplikasi' }, { id: 'dokumen', l: 'Dokumen & TTD' }, { id: 'backup', l: 'Backup & Restore' }, { id: 'migrasi', l: 'Migrasi Data' }, { id: 'log', l: 'Log Aktivitas' }, { id: 'sistem', l: 'Sistem & Performa' }];
+const SET_TABS = [{ id: 'users', l: 'Pengguna & Role' }, { id: 'app', l: 'Pengaturan Aplikasi' }, { id: 'dokumen', l: 'Dokumen & TTD' }, { id: 'backup', l: 'Backup & Restore' }, { id: 'migrasi', l: 'Migrasi Data' }, { id: 'log', l: 'Log Aktivitas' }, { id: 'sistem', l: 'Sistem & Performa' }, { id: 'reset', l: 'Bersihkan Data' }];
 const MIG_SHEETS = ['Users', 'Vendor', 'Barang_Jasa', 'Penerima', 'PO', 'PO_Detail', 'BAST', 'BAST_Detail', 'Invoice', 'Template_Dokumen', 'CRM_Kontak', 'Log_Aktivitas'];
 Pages.pengaturan = {
   title: 'Pengaturan Sistem', roles: ['ADMIN'], deps: ['users', 'vendors', 'penerima'],
@@ -351,6 +351,7 @@ function setBody(st) {
       <div class="card"><h3>Import CSV Cepat</h3><p class="small muted">Untuk data dari luar (Excel/marketplace).</p><div class="row"><button class="btn btn-soft btn-sm" data-act="vendor.importcsv">Rekanan (CSV)</button><button class="btn btn-soft btn-sm" data-act="brg.import">Master Barang (CSV)</button></div></div></div></div>`;
   }
   if (st.tab === 'log') return `<div class="card pad-0"><div class="filters" style="padding:14px 16px"><div class="input-ic">${I('search')}<input class="input tinted" id="log-q" placeholder="Cari aksi, email, nomor dokumen…" value="${E(st.lq || '')}"></div><button class="btn btn-soft" data-act="log.load">${I('refresh')} Muat</button><button class="btn btn-soft" data-act="log.export">${I('excel')} Ekspor</button></div><div id="log-body"><div class="skel" style="height:200px;margin:0 16px 16px"></div></div></div>`;
+  if (st.tab === 'reset') return setReset(st);
   if (st.tab === 'sistem') return `<div class="grid g2"><div class="card"><div class="card-head"><div class="ic">${I('trend')}</div><h3>Kesehatan & Performa</h3></div><div id="sys-ping" class="stack"><div class="skel" style="height:80px"></div></div>
       <div class="info-box mt">${I('info')}<span>Arsitektur instan: SPA (navigasi 0 ms) · optimistic UI + antrean sinkron · cache lokal (buka ulang instan) · CacheService server (write-through) · batch read/write Sheets · polling versi ringan tiap ${Math.round((window.VMS_CONFIG.POLL_MS || 45000) / 1000)} dtk.</span></div></div>
     <div class="card"><div class="card-head"><div class="ic">${I('gear')}</div><h3>Pemeliharaan</h3></div><div class="stack"><div class="row"><div style="flex:1"><b class="small">Bersihkan cache server</b><div class="xs muted">Gunakan setelah mengedit Google Sheets secara manual</div></div><button class="btn btn-outline btn-sm" data-act="sys.cache">Bersihkan</button></div>
@@ -549,4 +550,62 @@ async function sysPing() {
   box.innerHTML = `<div class="grid g2" style="gap:10px">${[['Status server', p && p.success ? '<span style="color:var(--success-dark)">● Online</span>' : '<span style="color:var(--danger)">● Tidak terjangkau</span>'], ['Latensi ping', Math.round(t1 - t0) + ' ms'], ['Latensi API (auth+cache)', Math.round(t2 - t1) + ' ms'], ['Cache lokal', UI.fsize(bytes * 2)], ['Versi data', E(S.version)], ['Antrean sinkron', API.status().pending + ' request']].map(([k, v]) => `<div class="act-item" style="margin:0"><div class="mono xs muted">${k}</div><b class="mono">${v}</b></div>`).join('')}</div>`;
 }
 Act['sys.cache'] = async el => { UI.busy(el, true); try { await API.call('clearCache'); UI.toast('Cache server dibersihkan', 'ok'); App.refreshData(true); } catch (e) { UI.toast(e.message, 'err'); } UI.busy(el, false); };
+/* ---------- Bersihkan data contoh / reset data (siap produksi) ---------- */
+const RESET_MODE = [
+  { v: 'demo', t: 'Hapus data contoh saja', d: 'Menghapus semua data demo: akun *.demo, rekanan contoh beserta SP, BAPB, invoice, notifikasi & kontak CRM-nya, serta barang dan penanggung jawab contoh. Data asli yang sudah Anda input tetap utuh.', tag: 'Disarankan' },
+  { v: 'transaksi', t: 'Kosongkan semua transaksi', d: 'Menghapus seluruh SP, BAPB, invoice, notifikasi, antrean WhatsApp, blast dan riwayat CRM. Master rekanan, barang, penanggung jawab ruangan dan akun pengguna tetap.' },
+  { v: 'total', t: 'Mulai dari nol', d: 'Menghapus semua transaksi DAN semua master (rekanan, barang, penanggung jawab, kontak CRM) serta semua akun kecuali Administrator asli. Pengaturan, kop, template dokumen dan TTD tetap.', danger: true }
+];
+function setReset(st) {
+  const r = st.rs = st.rs || { mode: 'demo', log: false, berkas: false, prev: null, hasil: null };
+  const demoAkun = S.users.filter(u => /(\.demo@rsudhamba\.id|-demo\.id)$/i.test(u.email || '')).length;
+  const me = /(\.demo@rsudhamba\.id|-demo\.id)$/i.test(S.user.email || '');
+  return `<div class="grid g-3-2"><div class="stack">
+    <div class="card"><div class="card-head"><div class="ic" style="background:var(--danger-tint);color:var(--danger)">${I('trash')}</div><div style="flex:1"><h3>Bersihkan Data</h3><p>Siapkan aplikasi untuk dipakai resmi. Backup otomatis dibuat sebelum data dihapus.</p></div></div>
+      ${demoAkun ? `<div class="info-box mb">${I('info')}<span>Terdeteksi <b>${demoAkun} akun demo</b>${me ? ' — <b>Anda sedang login dengan akun demo</b>. Buat akun Administrator asli di tab <a href="#/pengaturan/users">Pengguna &amp; Role</a>, login dengan akun itu, lalu bersihkan data.' : '.'}</span></div>` : ''}
+      ${RESET_MODE.map(m => `<label class="check check-card" style="${r.mode === m.v ? 'outline:2px solid ' + (m.danger ? 'var(--danger)' : 'var(--primary)') : ''}"><input type="radio" name="rs-mode" value="${m.v}" ${r.mode === m.v ? 'checked' : ''} data-ch="rs.mode"><div><b>${E(m.t)}</b>${m.tag ? ` <span class="chip st-green nodot">${m.tag}</span>` : ''}${m.danger ? ' <span class="chip st-red nodot">Permanen</span>' : ''}<div class="small">${E(m.d)}</div></div></label>`).join('')}
+      <div class="stack mt" style="gap:8px">
+        <label class="check"><input type="checkbox" ${r.log ? 'checked' : ''} data-ch="rs.opt" data-f="log"><span class="small">Kosongkan juga seluruh <b>Log Aktivitas</b>${r.mode === 'demo' ? ' (tanpa ini, hanya log milik akun/data contoh yang dihapus)' : ''}</span></label>
+        ${r.mode !== 'demo' ? `<label class="check"><input type="checkbox" ${r.berkas ? 'checked' : ''} data-ch="rs.opt" data-f="berkas"><span class="small">Pindahkan <b>berkas transaksi di Google Drive</b> (folder rekanan &amp; dokumen hasil generate) ke Sampah — bisa dipulihkan 30 hari</span></label>` : ''}
+      </div>
+      <div class="row wrap mt"><button class="btn btn-outline" data-act="rs.preview">${I('eye')} Periksa data yang akan dihapus</button></div>
+      <div id="rs-prev" class="mt">${r.prev ? resetPrevHTML(r) : ''}</div>
+    </div></div>
+    <div class="stack"><div class="card"><h3>Yang tidak ikut dihapus</h3><ul class="small" style="padding-left:18px;line-height:24px;margin:8px 0 0">
+      <li>Pengaturan aplikasi, kop surat &amp; logo, format nomor</li><li>Template dokumen (Google Docs) &amp; spesimen TTD</li><li>Akun Administrator asli (bukan demo)</li><li>Backup database lama di Google Drive</li></ul></div>
+    <div class="card"><h3>Jaring pengaman</h3><p class="small muted">Sebelum menghapus, sistem membuat salinan penuh database bertanda <b>[pra-reset]</b> di folder Backup_Database. Bila keliru, pulihkan dari tab <a href="#/pengaturan/backup">Backup &amp; Restore</a>.</p>
+      <p class="small muted">Nomor urut dokumen (SP, BAPB, BAST, Invoice) kembali mulai dari 1 untuk jenis dokumen yang datanya sudah kosong.</p></div></div></div>`;
+}
+function resetPrevHTML(r) {
+  const p = r.prev, tot = p.rincian.reduce((a, x) => a + x.hapus, 0);
+  if (r.hasil) return `<div class="info-box" style="background:var(--success-tint);color:var(--success-dark)">${I('check')}<span><b>Selesai.</b> ${r.hasil.rincian.reduce((a, x) => a + (x.terhapus || 0), 0)} baris dihapus${r.hasil.berkas ? ', ' + r.hasil.berkas + ' folder/berkas Drive dipindah ke Sampah' : ''}.${r.hasil.backup ? ` Backup sebelum pembersihan: <a target="_blank" rel="noopener" href="${E(r.hasil.backup.url)}">${E(r.hasil.backup.name)}</a>` : ''}</span></div>`;
+  return `<div class="card pad-0"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Data</th><th class="num">Saat ini</th><th class="num">Dihapus</th><th class="num">Tersisa</th></tr></thead><tbody>
+    ${p.rincian.filter(x => x.total).map(x => `<tr><td data-l="Data">${E(x.label)}</td><td class="num" data-l="Saat ini">${UI.num(x.total)}</td><td class="num" data-l="Dihapus" style="color:${x.hapus ? 'var(--danger)' : 'var(--muted)'};font-weight:${x.hapus ? 600 : 400}">${UI.num(x.hapus)}</td><td class="num" data-l="Tersisa">${UI.num(x.sisa)}</td></tr>`).join('') || `<tr><td colspan="4">${UI.empty('Database masih kosong')}</td></tr>`}
+    </tbody></table></div></div>
+    ${p.akun.length ? `<p class="small mt-s"><b>Akun yang dihapus (${p.akun.length}):</b> ${p.akun.slice(0, 12).map(a => `<span class="tag-mini">${E(a.email)}</span>`).join(' ')}${p.akun.length > 12 ? ' …' : ''}</p>` : ''}
+    ${tot ? `<div class="card mt" style="border-color:var(--danger)"><label class="small" for="rs-ketik"><b>Ketik <span class="mono">HAPUS DATA</span> untuk melanjutkan</b> — ${UI.num(tot)} baris akan dihapus.</label>
+      <div class="row wrap mt-s"><input class="input mono" id="rs-ketik" autocomplete="off" placeholder="HAPUS DATA" style="max-width:220px" data-in="rs.ketik"><button class="btn btn-danger" id="rs-go" data-act="rs.run" disabled>${I('trash')} Hapus Sekarang</button></div></div>`
+    : `<div class="info-box">${I('check')}<span>Tidak ada data yang perlu dihapus untuk pilihan ini.</span></div>`}`;
+}
+const rsBox = () => { const r = ps('pengaturan').rs, b = document.getElementById('rs-prev'); if (b) b.innerHTML = r.prev ? resetPrevHTML(r) : ''; };
+Act['rs.mode'] = el => { const r = ps('pengaturan').rs; r.mode = el.value; r.prev = null; r.hasil = null; setRefresh(); };
+Act['rs.opt'] = el => { const r = ps('pengaturan').rs; r[el.dataset.f] = el.checked; r.prev = null; r.hasil = null; rsBox(); };
+Act['rs.ketik'] = el => { const b = document.getElementById('rs-go'); if (b) b.disabled = el.value.trim().toUpperCase() !== 'HAPUS DATA'; };
+Act['rs.preview'] = async el => {
+  const r = ps('pengaturan').rs; UI.busy(el, true);
+  try { const x = await API.call('resetPreview', { mode: r.mode, opsi: { log: r.log, berkas: r.berkas } }); r.prev = x.data; r.hasil = null; rsBox(); document.getElementById('rs-prev').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  catch (e) { UI.toast(e.message, 'err', 8000); }
+  UI.busy(el, false);
+};
+Act['rs.run'] = async el => {
+  const r = ps('pengaturan').rs, k = document.getElementById('rs-ketik');
+  if (!k || k.value.trim().toUpperCase() !== 'HAPUS DATA') return;
+  UI.busy(el, true);
+  try {
+    const x = await API.call('resetData', { mode: r.mode, opsi: { log: r.log, berkas: r.berkas }, konfirmasi: 'HAPUS DATA' }, { timeout: 300000, retry: false });
+    r.hasil = x.data; rsBox(); UI.toast(x.message, 'ok', 8000);
+    try { Object.keys(localStorage).filter(k2 => k2.indexOf('vms_draft') === 0).forEach(k2 => localStorage.removeItem(k2)); } catch (e2) { }
+    App.refreshData(true);
+  } catch (e) { UI.toast(e.message, 'err', 8000); UI.busy(el, false); }
+};
 Act['sys.local'] = async () => { if (await UI.confirm('Hapus cache perangkat?', 'Data lokal di browser ini dihapus dan Anda akan keluar.', { danger: true, ok: 'Hapus & keluar' })) App.logout(); };

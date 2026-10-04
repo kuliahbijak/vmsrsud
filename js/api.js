@@ -24,7 +24,7 @@ const API = (() => {
   let online = navigator.onLine !== false;
   const listeners = new Set();
   // aksi baca (aman diulang tanpa reqId)
-  const READ = /^(bootstrap|version|loadYear|images|getLogs|listBackups|importScan|scanTemplate|notifConfig|notifQueue|waAudience|waBlastList|waDevice|crmList|crmStats|crmDetail|crmExport|exportJson)$/;
+  const READ = /^(bootstrap|version|loadYear|images|getLogs|listBackups|importScan|scanTemplate|notifConfig|notifQueue|waAudience|waBlastList|waDevice|crmList|crmStats|crmDetail|crmExport|exportJson|resetPreview)$/;
 
   function setToken(t) { token = t; }
   function status() { return { pending: queue.length + (running ? 1 : 0), online }; }
